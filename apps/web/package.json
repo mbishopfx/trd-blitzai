@@ -1,0 +1,28 @@
+{
+  "name": "@trd-aiblitz/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@trd-aiblitz/domain": "file:../../packages/domain",
+    "@trd-aiblitz/integrations-attribution": "file:../../packages/integrations-attribution",
+    "@trd-aiblitz/integrations-gbp": "file:../../packages/integrations-gbp",
+    "next": "14.2.25",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

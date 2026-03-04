@@ -1,0 +1,60 @@
+import { z } from "zod";
+import {
+  blitzActionStatusValues,
+  attributionWindowValues,
+  blitzActionTypeValues,
+  blitzPhaseValues,
+  blitzRunStatusValues,
+  policyDecisionValues,
+  riskTierValues,
+  roleValues
+} from "./types";
+
+export const orgRoleSchema = z.enum(roleValues);
+export const blitzRunStatusSchema = z.enum(blitzRunStatusValues);
+export const blitzPhaseSchema = z.enum(blitzPhaseValues);
+export const blitzActionTypeSchema = z.enum(blitzActionTypeValues);
+export const blitzActionStatusSchema = z.enum(blitzActionStatusValues);
+export const riskTierSchema = z.enum(riskTierValues);
+export const policyDecisionSchema = z.enum(policyDecisionValues);
+export const attributionWindowSchema = z.enum(attributionWindowValues);
+
+export const createOrgSchema = z.object({
+  name: z.string().min(2),
+  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
+  ownerEmail: z.string().email()
+});
+
+export const createClientSchema = z.object({
+  name: z.string().min(2),
+  timezone: z.string().default("America/Chicago"),
+  websiteUrl: z.string().url().optional(),
+  primaryLocationLabel: z.string().optional()
+});
+
+export const createBlitzRunSchema = z.object({
+  playbookId: z.string().uuid().optional(),
+  policySnapshot: z.record(z.unknown()).default({}),
+  triggeredBy: z.string().min(1)
+});
+
+export const upsertAutopilotPolicySchema = z.object({
+  maxDailyActionsPerLocation: z.number().int().positive(),
+  maxActionsPerPhase: z.number().int().positive(),
+  minCooldownMinutes: z.number().int().nonnegative(),
+  denyCriticalWithoutEscalation: z.boolean(),
+  enabledActionTypes: z.array(blitzActionTypeSchema).min(1),
+  reviewReplyAllRatingsEnabled: z.boolean()
+});
+
+export const connectIntegrationSchema = z.object({
+  providerAccountId: z.string().min(1),
+  scopes: z.array(z.string()).default([]),
+  metadata: z.record(z.unknown()).default({})
+});
+
+export type CreateOrgInput = z.infer<typeof createOrgSchema>;
+export type CreateClientInput = z.infer<typeof createClientSchema>;
+export type CreateBlitzRunInput = z.infer<typeof createBlitzRunSchema>;
+export type UpsertAutopilotPolicyInput = z.infer<typeof upsertAutopilotPolicySchema>;
+export type ConnectIntegrationInput = z.infer<typeof connectIntegrationSchema>;

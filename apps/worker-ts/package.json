@@ -1,0 +1,26 @@
+{
+  "name": "@trd-aiblitz/worker-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@trd-aiblitz/domain": "file:../../packages/domain",
+    "@trd-aiblitz/integrations-gbp": "file:../../packages/integrations-gbp",
+    "bullmq": "^5.12.12",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

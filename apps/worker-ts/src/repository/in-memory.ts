@@ -1,0 +1,173 @@
+import { randomUUID } from "node:crypto";
+import { transitionRunStatus } from "@trd-aiblitz/domain";
+import type {
+  BlitzAction,
+  BlitzAutopilotPolicy,
+  BlitzRun,
+  BlitzRunSummary,
+  BlitzRunStatus,
+  PolicyDecision
+} from "@trd-aiblitz/domain";
+import type { ActionLogRecord, BlitzRunRepository, RollbackRecord } from "../types";
+
+interface InMemoryState {
+  runs: Map<string, BlitzRun>;
+  actions: Map<string, BlitzAction>;
+  policies: Map<string, BlitzAutopilotPolicy>;
+  logs: ActionLogRecord[];
+  rollbacks: RollbackRecord[];
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function defaultPolicy(clientId: string): BlitzAutopilotPolicy {
+  return {
+    clientId,
+    maxDailyActionsPerLocation: 150,
+    maxActionsPerPhase: 40,
+    minCooldownMinutes: 0,
+    denyCriticalWithoutEscalation: true,
+    enabledActionTypes: [
+      "profile_patch",
+      "media_upload",
+      "post_publish",
+      "review_reply",
+      "hours_update",
+      "attribute_update"
+    ],
+    reviewReplyAllRatingsEnabled: true,
+    updatedAt: nowIso()
+  };
+}
+
+export class InMemoryBlitzRepository implements BlitzRunRepository {
+  private readonly state: InMemoryState;
+
+  constructor(seed?: { runs?: BlitzRun[]; policies?: BlitzAutopilotPolicy[] }) {
+    this.state = {
+      runs: new Map((seed?.runs ?? []).map((run) => [run.id, run])),
+      actions: new Map(),
+      policies: new Map((seed?.policies ?? []).map((policy) => [policy.clientId, policy])),
+      logs: [],
+      rollbacks: []
+    };
+  }
+
+  async getRun(runId: string): Promise<BlitzRun | null> {
+    return this.state.runs.get(runId) ?? null;
+  }
+
+  async listActions(runId: string): Promise<BlitzAction[]> {
+    return [...this.state.actions.values()].filter((action) => action.runId === runId);
+  }
+
+  async findActionByIdempotencyKey(runId: string, idempotencyKey: string): Promise<BlitzAction | null> {
+    return (
+      [...this.state.actions.values()].find(
+        (action) => action.runId === runId && action.idempotencyKey === idempotencyKey
+      ) ?? null
+    );
+  }
+
+  async insertAction(input: {
+    runId: string;
+    organizationId: string;
+    clientId: string;
+    phase: BlitzAction["phase"];
+    actionType: BlitzAction["actionType"];
+    riskTier: BlitzAction["riskTier"];
+    policyDecision: PolicyDecision;
+    status: BlitzAction["status"];
+    actor: "system" | "user";
+    idempotencyKey: string;
+    payload: Record<string, unknown>;
+    policySnapshot: Record<string, unknown>;
+  }): Promise<BlitzAction> {
+    const action: BlitzAction = {
+      id: randomUUID(),
+      runId: input.runId,
+      organizationId: input.organizationId,
+      clientId: input.clientId,
+      phase: input.phase,
+      actionType: input.actionType,
+      riskTier: input.riskTier,
+      policyDecision: input.policyDecision,
+      status: input.status,
+      actor: input.actor,
+      idempotencyKey: input.idempotencyKey,
+      payload: input.payload,
+      policySnapshot: input.policySnapshot,
+      result: null,
+      error: null,
+      createdAt: nowIso(),
+      executedAt: null,
+      rolledBackAt: null
+    };
+
+    this.state.actions.set(action.id, action);
+    return action;
+  }
+
+  async updateAction(
+    actionId: string,
+    patch: Partial<Pick<BlitzAction, "status" | "policyDecision" | "result" | "error" | "executedAt" | "rolledBackAt">>
+  ): Promise<BlitzAction | null> {
+    const action = this.state.actions.get(actionId);
+    if (!action) {
+      return null;
+    }
+
+    const updated: BlitzAction = {
+      ...action,
+      ...patch
+    };
+
+    this.state.actions.set(actionId, updated);
+    return updated;
+  }
+
+  async getAutopilotPolicy(clientId: string): Promise<BlitzAutopilotPolicy> {
+    const existing = this.state.policies.get(clientId);
+    if (existing) {
+      return existing;
+    }
+
+    const seeded = defaultPolicy(clientId);
+    this.state.policies.set(clientId, seeded);
+    return seeded;
+  }
+
+  async setRunStatus(runId: string, status: BlitzRunStatus, summary?: BlitzRunSummary): Promise<BlitzRun | null> {
+    const current = this.state.runs.get(runId);
+    if (!current) {
+      return null;
+    }
+
+    const transitioned = transitionRunStatus(current, status, nowIso());
+    const updated: BlitzRun = {
+      ...transitioned,
+      summary: summary ? (summary as unknown as Record<string, unknown>) : transitioned.summary
+    };
+
+    this.state.runs.set(runId, updated);
+    return updated;
+  }
+
+  async appendActionLog(log: ActionLogRecord): Promise<void> {
+    this.state.logs.push(log);
+  }
+
+  async createRollback(record: RollbackRecord): Promise<void> {
+    this.state.rollbacks.push(record);
+  }
+
+  seedRun(run: BlitzRun): void {
+    this.state.runs.set(run.id, run);
+  }
+
+  snapshot(): InMemoryState {
+    return this.state;
+  }
+}

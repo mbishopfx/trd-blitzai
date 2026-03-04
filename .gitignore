@@ -1,0 +1,28 @@
+# Node
+node_modules/
+.npm/
+
+# Build outputs
+.next/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log

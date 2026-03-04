@@ -1,0 +1,10 @@
+{
+  "name": "@trd-aiblitz/worker-py",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "echo 'python service: no TypeScript typecheck'",
+    "test": "echo 'python service tests run in virtualenv via pytest'",
+    "dev": "uvicorn main:app --host 0.0.0.0 --port 8001 --reload"
+  }
+}
