@@ -1,0 +1,157 @@
+TRD AIBLITZ TEAM TRAINING
+Document: Agency Operating Playbook
+Version: v1
+Date: 2026-03-04
+
+PURPOSE
+This playbook defines exactly how our team should use Blitz AI Agent from onboarding to ongoing optimization.
+
+OPERATING MODEL
+- Owner/Admin: Account governance, risk standards, final escalation approvals.
+- Operator: Day-to-day run launch, monitoring, policy tuning, rollback decisions.
+- Analyst: Attribution review, KPI analysis, insight generation.
+- Client Viewer: Read-only performance visibility.
+
+------------------------------------------------------------
+PHASE 0: PRE-ONBOARDING CHECKLIST (BEFORE PLATFORM ACTIONS)
+------------------------------------------------------------
+1) Confirm client goals and target service lines.
+2) Confirm approved service area/city language.
+3) Confirm brand voice and review response tone.
+4) Confirm legal/compliance boundaries.
+5) Gather integration data:
+- GBP access
+- GA4 property details
+- Google Ads account/customer ID
+
+Exit criteria:
+- Data complete
+- Access confirmed
+- Compliance notes recorded
+
+------------------------------------------------------------
+PHASE 1: ONBOARDING WORKFLOW (DAY 0)
+------------------------------------------------------------
+1) Create organization.
+2) Create client workspace.
+3) Connect GBP OAuth.
+4) Connect GA4 and Google Ads.
+5) Configure autopilot policy defaults.
+6) Validate protocol module selection.
+7) Launch initial Blitz run.
+
+Operator note:
+Do not launch a Blitz run until policy and integration checks are complete.
+
+------------------------------------------------------------
+PHASE 2: INITIAL BLITZ EXECUTION (FIRST 60-90 MINUTES)
+------------------------------------------------------------
+Execution targets:
+- Complete selected protocol modules.
+- Maintain policy-compliant action behavior.
+- Capture all events in run logs.
+
+Monitoring checklist:
+- Confirm run enters active state.
+- Check action progression by phase.
+- Watch for failed high-risk actions.
+- Trigger rollback only when necessary and document reason.
+
+------------------------------------------------------------
+PHASE 3: 48-96 HOUR REVIEW LOOP
+------------------------------------------------------------
+Purpose:
+Validate immediate movement signals and adjust execution strategy.
+
+Operator/Analyst review:
+1) Open run monitor and review phase/action outcomes.
+2) Check attribution panel (7d and 30d views).
+3) Evaluate:
+- Calls
+- Directions
+- Clicks
+- Conversion changes
+4) Review timeline for anomalies.
+5) Update policy limits if needed.
+6) Schedule or launch next run cycle.
+
+------------------------------------------------------------
+PHASE 4: WEEKLY AUTOPILOT CADENCE
+------------------------------------------------------------
+Weekly standard:
+1) Check integration health.
+2) Review run history and success rate.
+3) Review policy fit to current client reality.
+4) Review attribution movement.
+5) Execute content/review/interaction optimization cycle.
+6) Produce client-facing summary.
+
+Cadence expectation:
+- Every managed client gets weekly operational review.
+- No client remains idle without documented reason.
+
+------------------------------------------------------------
+POLICY AND RISK CONTROL SOP
+------------------------------------------------------------
+Always enforce:
+- Per-phase action boundaries
+- Daily action caps
+- Cooldown windows
+- Escalation rules for high/critical risk behaviors
+
+If action failures occur:
+1) Identify scope (single action vs systemic).
+2) Use single rollback or batch high-risk rollback.
+3) Log rationale in operator timeline.
+4) Re-run only after root cause is understood.
+
+------------------------------------------------------------
+CLIENT COMMUNICATION SOP
+------------------------------------------------------------
+What we report:
+- What was executed
+- Why it was executed
+- What changed
+- What we are doing next
+
+Communication style:
+- Evidence-first
+- No ranking guarantees
+- Emphasize measured directional improvements
+
+Simple monthly narrative:
+"We executed and validated optimization workflows across your profile completeness, media freshness, review response,
+and interaction signals. Attribution shows directional movement in performance, and we are tuning policy + cadence
+for compounding gains."
+
+------------------------------------------------------------
+INTERNAL QA CHECKLIST
+------------------------------------------------------------
+Before each run:
+- Correct org/client context selected
+- Policy reviewed
+- Required modules enabled
+- Integrations healthy
+
+After each run:
+- Action logs reviewed
+- Failures triaged
+- Rollbacks documented
+- Timeline notes posted
+
+Weekly:
+- Attribution reviewed
+- Next cycle planned
+- Client update prepared
+
+------------------------------------------------------------
+HOW WE WIN WITH THIS PLATFORM
+------------------------------------------------------------
+We win when we combine:
+- Fast execution
+- Strict controls
+- Measured outcomes
+- Relentless cadence
+
+The platform is the engine.
+Our advantage is disciplined operation of that engine across every account.

@@ -1,0 +1,107 @@
+TRD AIBLITZ TEAM TRAINING
+Document: Platform Overview
+Version: v1
+Date: 2026-03-04
+
+1) WHAT THIS PLATFORM IS
+Blitz AI Agent is an operator-controlled autonomous execution platform for Google Business Profile growth.
+It does not stop at recommendations. It executes approved actions through policy gates, logs every action,
+and tracks impact across GBP metrics, GA4 data, and Google Ads spend.
+
+In plain terms:
+- Most tools tell you what to do.
+- Blitz AI Agent does the work at scale with guardrails.
+
+2) THE CORE BUSINESS OUTCOME
+The platform is designed to create rapid local visibility momentum by coordinating:
+- Profile completeness improvements
+- Fresh media and posting activity
+- Faster review response velocity
+- Interaction-driving optimization
+- Measurable attribution and reporting
+
+The value proposition to clients:
+"We can move your local visibility faster because we run high-quality optimization workflows continuously,
+not manually once in a while."
+
+3) WHY IT MATTERS IN 2026
+Local search outcomes now depend heavily on:
+- Structured profile quality
+- Freshness and consistency of activity
+- Engagement behaviors (calls, directions, clicks)
+- Trust and review quality
+- AI-readable factual coverage
+
+Blitz AI Agent aligns operations directly with those signals.
+
+4) HOW THE PLATFORM IS STRUCTURED
+User-facing control plane (Vercel):
+- Organization and client onboarding
+- Integration setup (GBP, GA4, Google Ads)
+- Blitz run launch + monitoring + rollback
+- Policy management
+- Attribution and billing snapshots
+
+Execution + data services:
+- Queue-driven autonomous workflows
+- Policy checks and risk handling
+- Audit-safe action logging
+- Connection and token lifecycle handling
+
+5) WHAT "AUTONOMOUS" MEANS HERE
+Autonomous does not mean uncontrolled.
+Autonomous means:
+- The platform executes defined workflows without waiting on repetitive manual work.
+- Every action still follows policy rules and role boundaries.
+- Actions are visible, traceable, and reversible where supported.
+
+6) BLITZ PROTOCOL MODULES (CURRENT UI MODEL)
+The launch flow supports protocol module toggles that are attached to run policy snapshots:
+- Instant Completeness Overhaul
+- Visual and Media Flood
+- GEO Content Barrage
+- Review and Response Ignition
+- Interaction Velocity Booster
+- Competitor Benchmarking
+- Continuous Autopilot
+
+Practical meaning:
+- We can run full Blitz mode for aggressive optimization.
+- We can narrow modules for compliance-sensitive or low-bandwidth client scenarios.
+
+7) COMPLIANCE POSITIONING FOR TEAM USE
+The platform must be operated with these non-negotiables:
+- No fake reviews or synthetic engagement tactics.
+- No deceptive keyword stuffing.
+- No policy-violating content automation.
+- No hidden client actions without traceability.
+
+All team members should explain autonomy as:
+"High-speed execution with policy controls and full audit visibility."
+
+8) HOW WE EXPLAIN IT TO CLIENTS
+Simple script:
+"We use an AI operations platform that continuously improves your Google Business Profile by executing
+approved optimization actions, monitoring performance, and adapting weekly. You get faster movement,
+faster response times, and clearer attribution."
+
+9) SUCCESS METRICS WE TRACK
+Primary:
+- Profile views
+- Calls
+- Directions
+- Website clicks
+- Review response coverage and speed
+- Conversion lift and blended cost per result
+
+Secondary:
+- Action completion rate
+- Run success rate
+- Recovery speed on failures
+- Policy exception rate
+
+10) INTERNAL EXPECTATION
+This is not a passive dashboard product.
+This is an agency operations engine.
+If a team member is not checking runs, policies, attribution, and timeline signals weekly,
+we are underutilizing the system.

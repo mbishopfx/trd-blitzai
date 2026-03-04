@@ -1,0 +1,132 @@
+TRD AIBLITZ TEAM TRAINING
+Document: Feature and Benefit Reference
+Version: v1
+Date: 2026-03-04
+
+Use this as the internal reference sheet for sales calls, onboarding calls, and operator training.
+
+FEATURE: Organization and Client Workspaces
+What it does:
+- Creates tenant-safe org and client contexts for all operations.
+Key benefit:
+- Prevents cross-client contamination and enables scalable agency operations.
+How we use it:
+- Every new account gets org and client setup before any integration work starts.
+
+FEATURE: Supabase Session Auth + RBAC Headers
+What it does:
+- Supports authenticated operator sessions and role-aware API access.
+Key benefit:
+- Keeps sensitive actions available only to the right team roles.
+How we use it:
+- Owners/admins manage org controls, operators execute runs, analysts review outcomes.
+
+FEATURE: API Key Management
+What it does:
+- Creates scoped organization API keys for secure automation and service access.
+Key benefit:
+- Enables controlled machine-to-machine workflows with revocation options.
+How we use it:
+- Use API keys for internal connectors and backend automations only.
+
+FEATURE: GBP OAuth Connection
+What it does:
+- Starts and completes Google Business Profile authorization flow.
+Key benefit:
+- Unlocks profile-level execution capacity for Blitz runs.
+How we use it:
+- Complete OAuth during onboarding before first Blitz launch.
+
+FEATURE: GA4 Integration Connection
+What it does:
+- Stores GA4 connection settings for attribution blending.
+Key benefit:
+- Adds conversion context beyond GBP-native metrics.
+How we use it:
+- Configure property metadata during onboarding to activate blended reporting.
+
+FEATURE: Google Ads Integration Connection
+What it does:
+- Stores Ads account configuration for spend and campaign attribution.
+Key benefit:
+- Ties optimization activity to paid performance and blended cost per result.
+How we use it:
+- Connect Ads account in setup and validate account ID before reporting cycles.
+
+FEATURE: Blitz Run Launch
+What it does:
+- Creates a new run with operator-defined trigger context and policy snapshot.
+Key benefit:
+- Standardizes how high-intent optimization cycles are executed and tracked.
+How we use it:
+- Launch after integrations and policy checks are complete.
+
+FEATURE: Protocol Module Toggles
+What it does:
+- Lets operators enable/disable protocol modules per run.
+Key benefit:
+- Flexible execution: full Blitz mode or constrained module sets by client needs.
+How we use it:
+- Use full module stack by default; disable only with documented reason.
+
+FEATURE: Run History + Run Monitor
+What it does:
+- Tracks runs by client, shows action-level execution details, supports filtered investigation.
+Key benefit:
+- Faster diagnosis of what happened, what worked, and where interventions are needed.
+How we use it:
+- Review monitor after each launch and again in 48-96 hour check windows.
+
+FEATURE: Action Rollback Controls
+What it does:
+- Supports single-action rollback and batch rollback for failed high-risk actions.
+Key benefit:
+- Reduces operational risk while maintaining execution speed.
+How we use it:
+- Rollback only when failure impact is material and reason is documented.
+
+FEATURE: Autopilot Policy Controls
+What it does:
+- Configures limits, cooldowns, escalation behavior, enabled action types, and review reply behavior.
+Key benefit:
+- Prevents over-automation and enforces client-safe execution boundaries.
+How we use it:
+- Calibrate policy before run launch; re-tune weekly based on outcomes.
+
+FEATURE: Attribution Panel (GBP + GA4 + Ads)
+What it does:
+- Displays blended windowed performance metrics and directional lift.
+Key benefit:
+- Converts activity into measurable business impact for decision-making.
+How we use it:
+- Use 30d as default operating window; use 7d for tactical pivots.
+
+FEATURE: Billing and Usage Snapshot
+What it does:
+- Surfaces operator-level usage indicators tied to run and attribution activity.
+Key benefit:
+- Helps map production effort and automation usage against account value.
+How we use it:
+- Review during internal account audits and renewal planning.
+
+FEATURE: Operator Timeline
+What it does:
+- Records key events and outcomes from onboarding and run operations.
+Key benefit:
+- Preserves execution context and improves handoffs across team members.
+How we use it:
+- Treat timeline as the first-stop operational log before making changes.
+
+FEATURE: Sidebar Command Navigation
+What it does:
+- Provides section-based navigation for faster movement between operational surfaces.
+Key benefit:
+- Decreases operator friction and speeds up training for new team members.
+How we use it:
+- Follow top-to-bottom workflow order: Overview -> Onboarding -> Protocol -> Runs -> Policy -> Attribution.
+
+CLIENT-FACING BENEFIT SUMMARY
+- Faster execution than manual processes
+- Safer execution than unmanaged automation
+- Better visibility than disconnected tools
+- Better reporting than single-channel dashboards
