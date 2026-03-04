@@ -1,0 +1,41 @@
+:root {
+  --bg: #061826;
+  --bg-soft: #0f2334;
+  --panel: #122b3c;
+  --panel-soft: #163448;
+  --line: #2a4b61;
+  --text: #e8f2f9;
+  --text-muted: #9db6c7;
+  --accent: #2ad0c7;
+  --accent-strong: #18efb8;
+  --warning: #ffc75f;
+  --danger: #ff6f61;
+  --shadow: rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  color: var(--text);
+  background:
+    radial-gradient(1200px circle at 0% 0%, #164466 0%, transparent 40%),
+    radial-gradient(900px circle at 100% 0%, #21415d 0%, transparent 42%),
+    linear-gradient(170deg, #061826 0%, #081f30 50%, #061523 100%);
+  font-family: var(--font-heading), "Avenir Next", "Segoe UI", sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
