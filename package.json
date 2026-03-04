@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "start": "npm run start --workspace @trd-aiblitz/worker-ts",
     "dev:web": "npm --workspace apps/web run dev",
     "dev:worker": "npm --workspace apps/worker-ts run dev",
     "test": "npm run test --workspaces --if-present",
