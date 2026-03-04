@@ -1418,6 +1418,43 @@ export function ControlPlaneDashboard() {
           <article className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
+                <h2 className={styles.cardTitle}>Billing and Usage Snapshot</h2>
+                <p className={styles.cardHint}>Operator-side estimate view mapped to run and attribution activity.</p>
+              </div>
+            </header>
+            <div className={styles.summaryGrid}>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Plan</span>
+                <p className={styles.metricValue}>Enterprise v1</p>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Actions This Run</span>
+                <p className={styles.metricValue}>{actions.length ? formatNumber(actions.length) : "--"}</p>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Media/Content Activity</span>
+                <p className={styles.metricValue}>
+                  {actions.length
+                    ? formatNumber(
+                        actions.filter((item) => item.actionType === "media_upload" || item.actionType === "post_publish").length
+                      )
+                    : "--"}
+                </p>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Ad Spend (Window)</span>
+                <p className={styles.metricValue}>{attributionSummary ? formatCurrency(attributionSummary.currentSpend) : "--"}</p>
+              </div>
+            </div>
+            <p className={styles.cardHint}>
+              Stripe subscription, metering, and invoice reconciliation are wired server-side and can plug into this panel once
+              billing endpoints are exposed.
+            </p>
+          </article>
+
+          <article className={styles.card}>
+            <header className={styles.cardHeader}>
+              <div>
                 <h2 className={styles.cardTitle}>Operator Timeline</h2>
                 <p className={styles.cardHint}>Live feedback stream for wizard actions and monitor requests.</p>
               </div>
