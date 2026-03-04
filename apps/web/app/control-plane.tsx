@@ -9,6 +9,33 @@ type OrgRole = "owner" | "admin" | "operator" | "analyst" | "client_viewer";
 type AttributionWindow = "7d" | "30d" | "90d";
 type ActionStatusFilter = "all" | BlitzAction["status"];
 type RiskFilter = "all" | "low" | "medium" | "high" | "critical";
+type ToolbarSectionId =
+  | "section-overview"
+  | "section-onboarding"
+  | "section-protocol"
+  | "section-runs"
+  | "section-policy"
+  | "section-attribution"
+  | "section-admin"
+  | "section-timeline";
+type RunProtocolKey =
+  | "completenessOverhaul"
+  | "mediaFlood"
+  | "geoContentBarrage"
+  | "reviewIgnition"
+  | "interactionVelocity"
+  | "competitorBenchmarking"
+  | "continuousAutopilot";
+
+interface RunProtocolSelection {
+  completenessOverhaul: boolean;
+  mediaFlood: boolean;
+  geoContentBarrage: boolean;
+  reviewIgnition: boolean;
+  interactionVelocity: boolean;
+  competitorBenchmarking: boolean;
+  continuousAutopilot: boolean;
+}
 
 interface Organization {
   id: string;
@@ -126,6 +153,53 @@ const actionTypes = [
   "hours_update",
   "attribute_update"
 ];
+const toolbarItems: Array<{ id: ToolbarSectionId; label: string; detail: string }> = [
+  { id: "section-overview", label: "Overview", detail: "Health, auth, and workspace state" },
+  { id: "section-onboarding", label: "Onboarding", detail: "Org, client, integrations, launch" },
+  { id: "section-protocol", label: "Protocol", detail: "Blitz feature coverage and toggles" },
+  { id: "section-runs", label: "Run Monitor", detail: "Actions, filters, and rollback" },
+  { id: "section-policy", label: "Autopilot", detail: "Policy gates and all-rating replies" },
+  { id: "section-attribution", label: "Attribution", detail: "GBP + GA4 + Ads blended lift" },
+  { id: "section-admin", label: "Admin", detail: "API keys and org controls" },
+  { id: "section-timeline", label: "Timeline", detail: "Operational event stream" }
+];
+const runProtocolModules: Array<{ key: RunProtocolKey; label: string; detail: string }> = [
+  {
+    key: "completenessOverhaul",
+    label: "Instant Completeness Overhaul",
+    detail: "Primary/secondary categories, services, attributes, and hours normalization"
+  },
+  {
+    key: "mediaFlood",
+    label: "Visual and Media Flood",
+    detail: "Asset enhancement, metadata, and batch uploads for Vision AI signals"
+  },
+  {
+    key: "geoContentBarrage",
+    label: "GEO Content Barrage",
+    detail: "Local-intent content burst with AI-ready factual chunks"
+  },
+  {
+    key: "reviewIgnition",
+    label: "Review and Response Ignition",
+    detail: "All-rating review replies with escalation fallback and traceability"
+  },
+  {
+    key: "interactionVelocity",
+    label: "Interaction Velocity Booster",
+    detail: "CTA optimization and behavior-signal amplification"
+  },
+  {
+    key: "competitorBenchmarking",
+    label: "Competitor Benchmarking",
+    detail: "Comparative gap analysis and target-setting before phase execution"
+  },
+  {
+    key: "continuousAutopilot",
+    label: "Continuous Autopilot",
+    detail: "Post-run cadence for trend-jacking, monitoring, and iterative optimization"
+  }
+];
 const storageKey = "trd-aiblitz:control-plane:v2";
 
 function toSlug(input: string): string {
@@ -199,6 +273,16 @@ export function ControlPlaneDashboard() {
   const [runTriggeredBy, setRunTriggeredBy] = useState("agency-operator");
   const [runPolicySnapshotJson, setRunPolicySnapshotJson] = useState('{"mode":"autonomous","source":"dashboard"}');
   const [runLookupId, setRunLookupId] = useState("");
+  const [activeSectionId, setActiveSectionId] = useState<ToolbarSectionId>("section-overview");
+  const [runProtocolSelection, setRunProtocolSelection] = useState<RunProtocolSelection>({
+    completenessOverhaul: true,
+    mediaFlood: true,
+    geoContentBarrage: true,
+    reviewIgnition: true,
+    interactionVelocity: true,
+    competitorBenchmarking: true,
+    continuousAutopilot: true
+  });
 
   const [policy, setPolicy] = useState<BlitzAutopilotPolicy | null>(null);
   const [policyActionTypes, setPolicyActionTypes] = useState(actionTypes.join(", "));
@@ -262,6 +346,8 @@ export function ControlPlaneDashboard() {
           selectedRunId: string;
           actionStatusFilter: ActionStatusFilter;
           riskFilter: RiskFilter;
+          activeSectionId: ToolbarSectionId;
+          runProtocolSelection: Partial<RunProtocolSelection>;
         }>;
 
         if (parsed.role && roleOptions.includes(parsed.role)) {
@@ -282,6 +368,15 @@ export function ControlPlaneDashboard() {
         }
         if (parsed.riskFilter && riskFilters.includes(parsed.riskFilter)) {
           setRiskFilter(parsed.riskFilter);
+        }
+        if (parsed.activeSectionId && toolbarItems.some((item) => item.id === parsed.activeSectionId)) {
+          setActiveSectionId(parsed.activeSectionId);
+        }
+        if (parsed.runProtocolSelection && typeof parsed.runProtocolSelection === "object") {
+          setRunProtocolSelection((current) => ({
+            ...current,
+            ...parsed.runProtocolSelection
+          }));
         }
       }
     } catch {
@@ -304,10 +399,22 @@ export function ControlPlaneDashboard() {
         selectedClientId,
         selectedRunId,
         actionStatusFilter,
-        riskFilter
+        riskFilter,
+        activeSectionId,
+        runProtocolSelection
       })
     );
-  }, [actionStatusFilter, isHydrated, riskFilter, role, selectedClientId, selectedOrgId, selectedRunId]);
+  }, [
+    actionStatusFilter,
+    activeSectionId,
+    isHydrated,
+    riskFilter,
+    role,
+    runProtocolSelection,
+    selectedClientId,
+    selectedOrgId,
+    selectedRunId
+  ]);
 
   useEffect(() => {
     if (!supabase) {
@@ -339,6 +446,46 @@ export function ControlPlaneDashboard() {
       data.subscription.unsubscribe();
     };
   }, [pushFeed, supabase]);
+
+  const navigateToSection = useCallback((sectionId: ToolbarSectionId) => {
+    setActiveSectionId(sectionId);
+    const target = document.getElementById(sectionId);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated || typeof window === "undefined") {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (visible?.target?.id && toolbarItems.some((item) => item.id === visible.target.id)) {
+          setActiveSectionId(visible.target.id as ToolbarSectionId);
+        }
+      },
+      {
+        threshold: [0.2, 0.45, 0.7],
+        rootMargin: "-20% 0px -55% 0px"
+      }
+    );
+
+    for (const item of toolbarItems) {
+      const target = document.getElementById(item.id);
+      if (target) {
+        observer.observe(target);
+      }
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [isHydrated]);
 
   const request = useCallback(
     async <T,>(path: string, options?: { method?: string; body?: unknown }): Promise<T> => {
@@ -725,21 +872,47 @@ export function ControlPlaneDashboard() {
       return;
     }
 
+    const enabledModules = runProtocolModules
+      .filter((module) => runProtocolSelection[module.key])
+      .map((module) => module.label);
+    if (enabledModules.length === 0) {
+      pushFeed("At least one Blitz protocol module must be enabled.", "warn");
+      return;
+    }
+
+    const mergedPolicySnapshot: Record<string, unknown> = {
+      ...policySnapshot,
+      blitzProtocol: {
+        ...runProtocolSelection,
+        enabledModules,
+        generatedAt: new Date().toISOString()
+      }
+    };
+
     await withBusy("run:create", async () => {
       const payload = await request<{ run: BlitzRun }>(`/api/v1/clients/${encodeURIComponent(selectedClientId)}/blitz-runs`, {
         method: "POST",
         body: {
           triggeredBy: runTriggeredBy.trim(),
-          policySnapshot
+          policySnapshot: mergedPolicySnapshot
         }
       });
 
       setSelectedRunId(payload.run.id);
       setRunLookupId(payload.run.id);
       await loadClientRuns(selectedClientId);
-      pushFeed(`Blitz run launched: ${payload.run.id}`);
+      pushFeed(`Blitz run launched with ${enabledModules.length} protocol modules: ${payload.run.id}`);
     });
-  }, [loadClientRuns, pushFeed, request, runPolicySnapshotJson, runTriggeredBy, selectedClientId, withBusy]);
+  }, [
+    loadClientRuns,
+    pushFeed,
+    request,
+    runPolicySnapshotJson,
+    runProtocolSelection,
+    runTriggeredBy,
+    selectedClientId,
+    withBusy
+  ]);
 
   const handleFindRun = useCallback(async () => {
     if (!runLookupId.trim()) {
@@ -946,12 +1119,63 @@ export function ControlPlaneDashboard() {
     };
   }, [actions]);
 
+  const protocolCoverage = useMemo(() => {
+    const dynamicRows = runProtocolModules.map((module) => ({
+      key: module.key,
+      label: module.label,
+      detail: module.detail,
+      enabled: runProtocolSelection[module.key]
+    }));
+
+    return [
+      ...dynamicRows,
+      {
+        key: "attributionBlend",
+        label: "Attribution v1 (GBP + GA4 + Google Ads)",
+        detail: "Blended performance panel and daily sync endpoints are active in control plane",
+        enabled: true
+      },
+      {
+        key: "enterpriseControls",
+        label: "Enterprise Controls",
+        detail: "RBAC, org isolation, API key management, audit trail, billing snapshot surfaces",
+        enabled: true
+      }
+    ];
+  }, [runProtocolSelection]);
+
   const runStatus = run?.status ?? "no run selected";
   const healthState = run?.status === "failed" || run?.status === "rolled_back" ? "degraded" : "operational";
 
   return (
-    <main className={styles.shell}>
-      <section className={styles.hero}>
+    <main className={styles.appShell}>
+      <aside className={styles.toolbar}>
+        <div className={styles.toolbarBrand}>
+          <p className={styles.toolbarTitle}>Blitz AI Agent</p>
+          <p className={styles.toolbarSubtitle}>Protocol Command Center</p>
+        </div>
+        <nav className={styles.toolbarNav}>
+          {toolbarItems.map((item) => (
+            <button
+              key={item.id}
+              className={`${styles.toolbarButton} ${activeSectionId === item.id ? styles.toolbarButtonActive : ""}`}
+              onClick={() => navigateToSection(item.id)}
+            >
+              <span className={styles.toolbarButtonLabel}>{item.label}</span>
+              <span className={styles.toolbarButtonDetail}>{item.detail}</span>
+            </button>
+          ))}
+        </nav>
+        <div className={styles.toolbarFooter}>
+          <p className={styles.toolbarFooterText}>Org: {selectedOrg?.name ?? "none selected"}</p>
+          <p className={styles.toolbarFooterText}>Client: {selectedClient?.name ?? "none selected"}</p>
+          <p className={styles.toolbarFooterText}>Run: {selectedRunId ? selectedRunId.slice(0, 12) : "none loaded"}</p>
+        </div>
+      </aside>
+
+      <div className={styles.platformWindow}>
+        <div className={styles.shell}>
+      <section id="section-overview" className={styles.hero}>
         <h1 className={styles.title}>Blitz AI Agent Control Plane</h1>
         <p className={styles.subtitle}>
           Enterprise operator console for onboarding, integrations, policy-governed autonomous runs, rollback control,
@@ -1047,7 +1271,7 @@ export function ControlPlaneDashboard() {
 
       <section className={styles.layout}>
         <div className={styles.column}>
-          <article className={styles.card}>
+          <article id="section-onboarding" className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Onboarding Wizard</h2>
@@ -1233,6 +1457,27 @@ export function ControlPlaneDashboard() {
                     />
                   </label>
                 </div>
+                <p className={styles.stepNote}>Protocol Modules (enabled modules are embedded into run policy snapshot)</p>
+                <div className={styles.protocolGrid}>
+                  {runProtocolModules.map((module) => (
+                    <label key={module.key} className={styles.protocolOption}>
+                      <input
+                        type="checkbox"
+                        checked={runProtocolSelection[module.key]}
+                        onChange={(event) =>
+                          setRunProtocolSelection((current) => ({
+                            ...current,
+                            [module.key]: event.target.checked
+                          }))
+                        }
+                      />
+                      <div>
+                        <p className={styles.itemTitle}>{module.label}</p>
+                        <p className={styles.itemMeta}>{module.detail}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Policy Snapshot JSON</span>
                   <textarea
@@ -1261,7 +1506,7 @@ export function ControlPlaneDashboard() {
             </div>
           </article>
 
-          <article className={styles.card}>
+          <article id="section-admin" className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Admin and API Keys</h2>
@@ -1341,7 +1586,7 @@ export function ControlPlaneDashboard() {
         </div>
 
         <div className={styles.column}>
-          <article className={styles.card}>
+          <article id="section-workspace" className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Workspace and Clients</h2>
@@ -1408,7 +1653,31 @@ export function ControlPlaneDashboard() {
             </div>
           </article>
 
-          <article className={styles.card}>
+          <article id="section-protocol" className={styles.card}>
+            <header className={styles.cardHeader}>
+              <div>
+                <h2 className={styles.cardTitle}>Blitz Protocol Coverage</h2>
+                <p className={styles.cardHint}>
+                  PR verification map for autonomous capabilities, attribution, and enterprise controls.
+                </p>
+              </div>
+            </header>
+            <ul className={styles.list}>
+              {protocolCoverage.map((item) => (
+                <li key={item.key} className={styles.listItem}>
+                  <p className={styles.itemTitle}>
+                    {item.label}{" "}
+                    <span className={`${styles.status} ${item.enabled ? styles.statusCompleted : styles.statusFailed}`}>
+                      {item.enabled ? "included" : "disabled"}
+                    </span>
+                  </p>
+                  <p className={styles.itemMeta}>{item.detail}</p>
+                </li>
+              ))}
+            </ul>
+          </article>
+
+          <article id="section-runs" className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Run Monitor</h2>
@@ -1586,7 +1855,7 @@ export function ControlPlaneDashboard() {
             </div>
           </article>
 
-          <article className={styles.card}>
+          <article id="section-policy" className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Autopilot Policy</h2>
@@ -1706,7 +1975,7 @@ export function ControlPlaneDashboard() {
             )}
           </article>
 
-          <article className={styles.card}>
+          <article id="section-attribution" className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Attribution Panel</h2>
@@ -1785,7 +2054,7 @@ export function ControlPlaneDashboard() {
             )}
           </article>
 
-          <article className={styles.card}>
+          <article id="section-billing" className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Billing and Usage Snapshot</h2>
@@ -1822,7 +2091,7 @@ export function ControlPlaneDashboard() {
             </p>
           </article>
 
-          <article className={styles.card}>
+          <article id="section-timeline" className={styles.card}>
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Operator Timeline</h2>
@@ -1854,6 +2123,8 @@ export function ControlPlaneDashboard() {
           </article>
         </div>
       </section>
+        </div>
+      </div>
     </main>
   );
 }
