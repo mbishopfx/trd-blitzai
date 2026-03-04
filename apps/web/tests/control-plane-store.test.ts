@@ -6,6 +6,7 @@ import {
   createOrganization,
   getAttributionWindow,
   getRun,
+  listClientRuns,
   listRunActions,
   rollbackAction,
   setRunStatus
@@ -61,6 +62,39 @@ describe("control-plane store", () => {
     const rollback = await rollbackAction(actions[0].id, "test");
 
     expect(rollback?.action.status).toBe("rolled_back");
+  });
+
+  it("lists client runs newest-first with limit", async () => {
+    const org = await createOrganization({
+      name: "Runs Org",
+      slug: `runs-org-${Date.now()}`,
+      ownerEmail: "owner@runs.com"
+    });
+
+    const client = await createClient({
+      organizationId: org.id,
+      name: "Client Runs",
+      timezone: "America/Chicago"
+    });
+
+    const first = await createBlitzRun({
+      organizationId: org.id,
+      clientId: client.id,
+      createdBy: "tester",
+      policySnapshot: { sequence: 1 }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await createBlitzRun({
+      organizationId: org.id,
+      clientId: client.id,
+      createdBy: "tester",
+      policySnapshot: { sequence: 2 }
+    });
+
+    const runs = await listClientRuns(client.id, { limit: 1 });
+    expect(runs).toHaveLength(1);
+    expect(runs[0].id).toBe(second.id);
+    expect(runs[0].id).not.toBe(first.id);
   });
 
   it("returns attribution summary for selected window", async () => {

@@ -1,10 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from "@/lib/supabase-browser";
 import styles from "./control-plane.module.css";
 
 type OrgRole = "owner" | "admin" | "operator" | "analyst" | "client_viewer";
 type AttributionWindow = "7d" | "30d" | "90d";
+type ActionStatusFilter = "all" | BlitzAction["status"];
+type RiskFilter = "all" | "low" | "medium" | "high" | "critical";
 
 interface Organization {
   id: string;
@@ -112,6 +116,8 @@ interface FeedItem {
 }
 
 const roleOptions: OrgRole[] = ["owner", "admin", "operator", "analyst", "client_viewer"];
+const actionStatusFilters: ActionStatusFilter[] = ["all", "pending", "executed", "failed", "rolled_back", "skipped"];
+const riskFilters: RiskFilter[] = ["all", "low", "medium", "high", "critical"];
 const actionTypes = [
   "profile_patch",
   "media_upload",
@@ -120,6 +126,7 @@ const actionTypes = [
   "hours_update",
   "attribute_update"
 ];
+const storageKey = "trd-aiblitz:control-plane:v2";
 
 function toSlug(input: string): string {
   return input
@@ -161,9 +168,16 @@ function formatDate(value: string | null): string {
 }
 
 export function ControlPlaneDashboard() {
+  const supabaseEnabled = isSupabaseBrowserConfigured();
+  const supabase = useMemo(() => (supabaseEnabled ? getSupabaseBrowserClient() : null), [supabaseEnabled]);
+
+  const [isHydrated, setIsHydrated] = useState(false);
   const [role, setRole] = useState<OrgRole>("owner");
   const [apiKey, setApiKey] = useState("");
   const [bearerToken, setBearerToken] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [session, setSession] = useState<Session | null>(null);
 
   const [orgName, setOrgName] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
@@ -204,9 +218,11 @@ export function ControlPlaneDashboard() {
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
-  const [recentRunIds, setRecentRunIds] = useState<string[]>([]);
+  const [clientRuns, setClientRuns] = useState<BlitzRun[]>([]);
   const [run, setRun] = useState<BlitzRun | null>(null);
   const [actions, setActions] = useState<BlitzAction[]>([]);
+  const [actionStatusFilter, setActionStatusFilter] = useState<ActionStatusFilter>("all");
+  const [riskFilter, setRiskFilter] = useState<RiskFilter>("all");
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
@@ -230,6 +246,99 @@ export function ControlPlaneDashboard() {
 
     setFeed((current) => [item, ...current].slice(0, 40));
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<{
+          role: OrgRole;
+          selectedOrgId: string;
+          selectedClientId: string;
+          selectedRunId: string;
+          actionStatusFilter: ActionStatusFilter;
+          riskFilter: RiskFilter;
+        }>;
+
+        if (parsed.role && roleOptions.includes(parsed.role)) {
+          setRole(parsed.role);
+        }
+        if (parsed.selectedOrgId) {
+          setSelectedOrgId(parsed.selectedOrgId);
+        }
+        if (parsed.selectedClientId) {
+          setSelectedClientId(parsed.selectedClientId);
+        }
+        if (parsed.selectedRunId) {
+          setSelectedRunId(parsed.selectedRunId);
+          setRunLookupId(parsed.selectedRunId);
+        }
+        if (parsed.actionStatusFilter && actionStatusFilters.includes(parsed.actionStatusFilter)) {
+          setActionStatusFilter(parsed.actionStatusFilter);
+        }
+        if (parsed.riskFilter && riskFilters.includes(parsed.riskFilter)) {
+          setRiskFilter(parsed.riskFilter);
+        }
+      }
+    } catch {
+      // ignore malformed persisted state and continue with defaults
+    } finally {
+      setIsHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        role,
+        selectedOrgId,
+        selectedClientId,
+        selectedRunId,
+        actionStatusFilter,
+        riskFilter
+      })
+    );
+  }, [actionStatusFilter, isHydrated, riskFilter, role, selectedClientId, selectedOrgId, selectedRunId]);
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (error) {
+        pushFeed(`Supabase session check failed: ${error.message}`, "warn");
+        return;
+      }
+
+      setSession(data.session);
+      setBearerToken(data.session?.access_token ?? "");
+      if (data.session?.user.email) {
+        setAuthEmail(data.session.user.email);
+      }
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setBearerToken(nextSession?.access_token ?? "");
+      if (nextSession?.user.email) {
+        setAuthEmail(nextSession.user.email);
+      }
+    });
+
+    return () => {
+      data.subscription.unsubscribe();
+    };
+  }, [pushFeed, supabase]);
 
   const request = useCallback(
     async <T,>(path: string, options?: { method?: string; body?: unknown }): Promise<T> => {
@@ -344,6 +453,26 @@ export function ControlPlaneDashboard() {
     [request]
   );
 
+  const loadClientRuns = useCallback(
+    async (clientId: string) => {
+      const payload = await request<{ runs: BlitzRun[] }>(
+        `/api/v1/clients/${encodeURIComponent(clientId)}/blitz-runs?limit=25`
+      );
+      setClientRuns(payload.runs);
+      if (payload.runs.length === 0) {
+        setSelectedRunId("");
+        setRunLookupId("");
+        return;
+      }
+
+      if (!payload.runs.some((item) => item.id === selectedRunId)) {
+        setSelectedRunId(payload.runs[0].id);
+        setRunLookupId(payload.runs[0].id);
+      }
+    },
+    [request, selectedRunId]
+  );
+
   const loadRun = useCallback(
     async (runId: string) => {
       const [runPayload, actionPayload] = await Promise.all([
@@ -353,17 +482,22 @@ export function ControlPlaneDashboard() {
 
       setRun(runPayload.run);
       setActions(actionPayload.actions);
-      setRecentRunIds((current) => {
-        if (current.includes(runId)) {
-          return current;
+      setClientRuns((current) => {
+        const existing = current.find((item) => item.id === runPayload.run.id);
+        if (!existing) {
+          return [runPayload.run, ...current].slice(0, 25);
         }
-        return [runId, ...current].slice(0, 12);
+        return current.map((item) => (item.id === runPayload.run.id ? runPayload.run : item));
       });
     },
     [request]
   );
 
   useEffect(() => {
+    if (!isHydrated) {
+      return;
+    }
+
     void withBusy("orgs:load", async () => {
       try {
         await loadOrganizations();
@@ -372,12 +506,13 @@ export function ControlPlaneDashboard() {
         pushFeed(`Failed to load organizations: ${(error as Error).message}`, "error");
       }
     });
-  }, [loadOrganizations, pushFeed, withBusy]);
+  }, [isHydrated, loadOrganizations, pushFeed, withBusy]);
 
   useEffect(() => {
     if (!selectedOrgId) {
       setClients([]);
       setApiKeys([]);
+      setSelectedClientId("");
       return;
     }
 
@@ -396,19 +531,24 @@ export function ControlPlaneDashboard() {
       setPolicy(null);
       setAttributionSummary(null);
       setAttributionDaily([]);
+      setClientRuns([]);
+      setSelectedRunId("");
       return;
     }
 
     void withBusy("client:context", async () => {
       try {
-        await loadPolicy(selectedClientId);
-        await loadAttribution(selectedClientId, attributionWindow);
-        pushFeed(`Client ${selectedClientId} policy and attribution loaded.`);
+        await Promise.all([
+          loadPolicy(selectedClientId),
+          loadAttribution(selectedClientId, attributionWindow),
+          loadClientRuns(selectedClientId)
+        ]);
+        pushFeed(`Client ${selectedClientId} policy, attribution, and run history loaded.`);
       } catch (error) {
         pushFeed(`Client context load failed: ${(error as Error).message}`, "error");
       }
     });
-  }, [attributionWindow, loadAttribution, loadPolicy, pushFeed, selectedClientId, withBusy]);
+  }, [attributionWindow, loadAttribution, loadClientRuns, loadPolicy, pushFeed, selectedClientId, withBusy]);
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -596,9 +736,10 @@ export function ControlPlaneDashboard() {
 
       setSelectedRunId(payload.run.id);
       setRunLookupId(payload.run.id);
+      await loadClientRuns(selectedClientId);
       pushFeed(`Blitz run launched: ${payload.run.id}`);
     });
-  }, [pushFeed, request, runPolicySnapshotJson, runTriggeredBy, selectedClientId, withBusy]);
+  }, [loadClientRuns, pushFeed, request, runPolicySnapshotJson, runTriggeredBy, selectedClientId, withBusy]);
 
   const handleFindRun = useCallback(async () => {
     if (!runLookupId.trim()) {
@@ -608,6 +749,60 @@ export function ControlPlaneDashboard() {
 
     setSelectedRunId(runLookupId.trim());
   }, [pushFeed, runLookupId]);
+
+  const handleSignIn = useCallback(async () => {
+    if (!supabase) {
+      pushFeed("Supabase browser auth is not configured.", "warn");
+      return;
+    }
+    if (!authEmail.trim() || !authPassword.trim()) {
+      pushFeed("Email and password are required to sign in.", "warn");
+      return;
+    }
+
+    try {
+      await withBusy("auth:signin", async () => {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: authEmail.trim(),
+          password: authPassword
+        });
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        setSession(data.session);
+        setBearerToken(data.session?.access_token ?? "");
+        setAuthPassword("");
+        pushFeed(`Signed in as ${data.user?.email ?? authEmail.trim()}.`);
+      });
+    } catch (error) {
+      pushFeed(`Sign in failed: ${(error as Error).message}`, "error");
+    }
+  }, [authEmail, authPassword, pushFeed, supabase, withBusy]);
+
+  const handleSignOut = useCallback(async () => {
+    if (!supabase) {
+      pushFeed("Supabase browser auth is not configured.", "warn");
+      return;
+    }
+
+    try {
+      await withBusy("auth:signout", async () => {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        setSession(null);
+        setBearerToken("");
+        setAuthPassword("");
+        pushFeed("Signed out.");
+      });
+    } catch (error) {
+      pushFeed(`Sign out failed: ${(error as Error).message}`, "error");
+    }
+  }, [pushFeed, supabase, withBusy]);
 
   const handleRollbackAction = useCallback(
     async (actionId: string) => {
@@ -632,6 +827,44 @@ export function ControlPlaneDashboard() {
     },
     [loadRun, pushFeed, request, selectedRunId, withBusy]
   );
+
+  const handleRollbackHighRiskFailures = useCallback(async () => {
+    const candidates = actions.filter(
+      (action) => action.status === "failed" && (action.riskTier === "high" || action.riskTier === "critical")
+    );
+
+    if (candidates.length === 0) {
+      pushFeed("No failed high/critical actions available for batch rollback.", "warn");
+      return;
+    }
+
+    const confirmed = window.confirm(`Rollback ${candidates.length} failed high-risk actions?`);
+    if (!confirmed) {
+      return;
+    }
+
+    await withBusy("rollback:batch", async () => {
+      let successCount = 0;
+      for (const candidate of candidates) {
+        try {
+          await request(`/api/v1/blitz-actions/${encodeURIComponent(candidate.id)}/rollback`, {
+            method: "POST",
+            body: {
+              reason: "batch rollback for failed high-risk action"
+            }
+          });
+          successCount += 1;
+        } catch (error) {
+          pushFeed(`Rollback failed for ${candidate.id}: ${(error as Error).message}`, "error");
+        }
+      }
+
+      if (selectedRunId) {
+        await loadRun(selectedRunId);
+      }
+      pushFeed(`Batch rollback completed: ${successCount}/${candidates.length} actions rolled back.`, "warn");
+    });
+  }, [actions, loadRun, pushFeed, request, selectedRunId, withBusy]);
 
   const handleSavePolicy = useCallback(async () => {
     if (!selectedClientId || !policy) {
@@ -687,6 +920,32 @@ export function ControlPlaneDashboard() {
     });
   }, [apiKeyExpiresAt, apiKeyName, apiKeyScopes, loadApiKeys, pushFeed, request, selectedOrgId, withBusy]);
 
+  const filteredActions = useMemo(() => {
+    return actions.filter((action) => {
+      const statusMatch = actionStatusFilter === "all" || action.status === actionStatusFilter;
+      const riskMatch = riskFilter === "all" || action.riskTier === riskFilter;
+      return statusMatch && riskMatch;
+    });
+  }, [actionStatusFilter, actions, riskFilter]);
+
+  const actionStats = useMemo(() => {
+    const executed = actions.filter((action) => action.status === "executed").length;
+    const failed = actions.filter((action) => action.status === "failed").length;
+    const pending = actions.filter((action) => action.status === "pending").length;
+    const rolledBack = actions.filter((action) => action.status === "rolled_back").length;
+    const highRiskFailed = actions.filter(
+      (action) => action.status === "failed" && (action.riskTier === "high" || action.riskTier === "critical")
+    ).length;
+
+    return {
+      executed,
+      failed,
+      pending,
+      rolledBack,
+      highRiskFailed
+    };
+  }, [actions]);
+
   const runStatus = run?.status ?? "no run selected";
   const healthState = run?.status === "failed" || run?.status === "rolled_back" ? "degraded" : "operational";
 
@@ -703,6 +962,7 @@ export function ControlPlaneDashboard() {
           <span className={styles.pill}>Active Run: {runStatus}</span>
           <span className={styles.pill}>Workspace: {selectedOrg?.name ?? "none"}</span>
           <span className={styles.pill}>Client: {selectedClient?.name ?? "none"}</span>
+          <span className={styles.pill}>Auth: {session?.user.email ?? "anonymous"}</span>
         </div>
         <div className={styles.authControls}>
           <label className={styles.field}>
@@ -733,7 +993,42 @@ export function ControlPlaneDashboard() {
               placeholder="eyJ..."
             />
           </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Supabase Email</span>
+            <input
+              className={styles.input}
+              value={authEmail}
+              onChange={(event) => setAuthEmail(event.target.value)}
+              placeholder="operator@agency.com"
+              disabled={!supabaseEnabled}
+            />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Supabase Password</span>
+            <input
+              className={styles.input}
+              type="password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              placeholder="••••••••"
+              disabled={!supabaseEnabled}
+            />
+          </label>
           <div className={styles.buttonRow}>
+            <button
+              className={`${styles.btnPrimary} ${busyKey || !supabaseEnabled ? styles.disabled : ""}`}
+              onClick={() => void handleSignIn()}
+              disabled={Boolean(busyKey) || !supabaseEnabled}
+            >
+              Sign In
+            </button>
+            <button
+              className={`${styles.btnGhost} ${busyKey || !supabaseEnabled ? styles.disabled : ""}`}
+              onClick={() => void handleSignOut()}
+              disabled={Boolean(busyKey) || !supabaseEnabled}
+            >
+              Sign Out
+            </button>
             <button
               className={`${styles.btnSecondary} ${busyKey ? styles.disabled : ""}`}
               onClick={() => {
@@ -1117,9 +1412,16 @@ export function ControlPlaneDashboard() {
             <header className={styles.cardHeader}>
               <div>
                 <h2 className={styles.cardTitle}>Run Monitor</h2>
-                <p className={styles.cardHint}>Track run progression and execute rollback per action.</p>
+                <p className={styles.cardHint}>Track run progression, filter actions, and execute smart rollbacks.</p>
               </div>
               <div className={styles.buttonRow}>
+                <button
+                  className={`${styles.btnDanger} ${busyKey || actionStats.highRiskFailed === 0 ? styles.disabled : ""}`}
+                  onClick={() => void handleRollbackHighRiskFailures()}
+                  disabled={Boolean(busyKey) || actionStats.highRiskFailed === 0}
+                >
+                  Rollback Failed High Risk ({actionStats.highRiskFailed})
+                </button>
                 <button
                   className={`${styles.btnGhost} ${busyKey || !selectedRunId ? styles.disabled : ""}`}
                   onClick={() => {
@@ -1131,6 +1433,19 @@ export function ControlPlaneDashboard() {
                   disabled={Boolean(busyKey) || !selectedRunId}
                 >
                   Refresh Run
+                </button>
+                <button
+                  className={`${styles.btnGhost} ${busyKey || !selectedClientId ? styles.disabled : ""}`}
+                  onClick={() => {
+                    if (!selectedClientId) return;
+                    void withBusy("runs:refresh", async () => {
+                      await loadClientRuns(selectedClientId);
+                      pushFeed("Run history refreshed.");
+                    });
+                  }}
+                  disabled={Boolean(busyKey) || !selectedClientId}
+                >
+                  Refresh Run History
                 </button>
               </div>
             </header>
@@ -1156,19 +1471,70 @@ export function ControlPlaneDashboard() {
               </div>
             </div>
 
-            {recentRunIds.length > 0 ? (
+            <div className={styles.summaryGrid}>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Executed</span>
+                <p className={styles.metricValue}>{formatNumber(actionStats.executed)}</p>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Pending</span>
+                <p className={styles.metricValue}>{formatNumber(actionStats.pending)}</p>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Failed</span>
+                <p className={styles.metricValue}>{formatNumber(actionStats.failed)}</p>
+              </div>
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Rolled Back</span>
+                <p className={styles.metricValue}>{formatNumber(actionStats.rolledBack)}</p>
+              </div>
+            </div>
+
+            <div className={styles.fieldGrid}>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Action Status Filter</span>
+                <select
+                  className={styles.select}
+                  value={actionStatusFilter}
+                  onChange={(event) => setActionStatusFilter(event.target.value as ActionStatusFilter)}
+                >
+                  {actionStatusFilters.map((filter) => (
+                    <option key={filter} value={filter}>
+                      {filter}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Risk Filter</span>
+                <select className={styles.select} value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as RiskFilter)}>
+                  {riskFilters.map((filter) => (
+                    <option key={filter} value={filter}>
+                      {filter}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {clientRuns.length > 0 ? (
               <div className={styles.buttonRow}>
-                {recentRunIds.map((runId) => (
+                {clientRuns.map((item) => (
                   <button
-                    key={runId}
-                    className={`${styles.btnGhost} ${selectedRunId === runId ? styles.activeItem : ""}`}
-                    onClick={() => setSelectedRunId(runId)}
+                    key={item.id}
+                    className={`${styles.btnGhost} ${selectedRunId === item.id ? styles.activeItem : ""}`}
+                    onClick={() => {
+                      setSelectedRunId(item.id);
+                      setRunLookupId(item.id);
+                    }}
                   >
-                    <span className={styles.mono}>{runId.slice(0, 12)}</span>
+                    <span className={styles.mono}>{item.id.slice(0, 12)}</span> | {item.status}
                   </button>
                 ))}
               </div>
-            ) : null}
+            ) : (
+              <p className={styles.cardHint}>No run history for this client yet.</p>
+            )}
 
             <div className={styles.tableWrap}>
               <table className={styles.table}>
@@ -1184,12 +1550,14 @@ export function ControlPlaneDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {actions.length === 0 ? (
+                  {filteredActions.length === 0 ? (
                     <tr>
-                      <td colSpan={7}>No actions loaded for this run.</td>
+                      <td colSpan={7}>
+                        {actions.length === 0 ? "No actions loaded for this run." : "No actions match current filters."}
+                      </td>
                     </tr>
                   ) : (
-                    actions.map((action) => (
+                    filteredActions.map((action) => (
                       <tr key={action.id}>
                         <td>{action.phase}</td>
                         <td>{action.actionType}</td>
@@ -1201,9 +1569,11 @@ export function ControlPlaneDashboard() {
                         <td>{action.error ?? "--"}</td>
                         <td>
                           <button
-                            className={`${styles.btnDanger} ${busyKey ? styles.disabled : ""}`}
+                            className={`${styles.btnDanger} ${
+                              busyKey || action.status === "rolled_back" || action.status === "skipped" ? styles.disabled : ""
+                            }`}
                             onClick={() => void handleRollbackAction(action.id)}
-                            disabled={Boolean(busyKey)}
+                            disabled={Boolean(busyKey) || action.status === "rolled_back" || action.status === "skipped"}
                           >
                             Rollback
                           </button>

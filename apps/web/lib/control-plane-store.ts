@@ -497,6 +497,35 @@ export async function getRun(runId: string): Promise<BlitzRun | null> {
   return mapRunRow(row as Record<string, unknown>);
 }
 
+export async function listClientRuns(
+  clientId: string,
+  options?: { limit?: number }
+): Promise<BlitzRun[]> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 25, 100));
+
+  if (!isSupabaseConfigured()) {
+    return [...getStore().runs.values()]
+      .filter((run) => run.clientId === clientId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: rows, error } = await supabase
+    .from("blitz_runs")
+    .select(
+      "id,organization_id,client_id,status,started_at,completed_at,triggered_by,created_at,policy_snapshot,summary"
+    )
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    throw new Error(`Failed to list client runs: ${error.message}`);
+  }
+
+  return (rows ?? []).map((row) => mapRunRow(row as Record<string, unknown>));
+}
+
 export async function listRunActions(runId: string): Promise<BlitzAction[]> {
   if (!isSupabaseConfigured()) {
     return [...getStore().actions.values()].filter((action) => action.runId === runId);
