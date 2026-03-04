@@ -17,7 +17,11 @@ Enterprise autonomous GBP optimization platform with policy-gated execution, att
 ### Control Plane APIs (`apps/web`)
 
 - `POST /api/v1/orgs`
+- `GET /api/v1/orgs`
 - `POST /api/v1/orgs/{orgId}/clients`
+- `GET /api/v1/orgs/{orgId}/clients`
+- `GET /api/v1/orgs/{orgId}/api-keys`
+- `POST /api/v1/orgs/{orgId}/api-keys`
 - `GET /api/v1/gbp/oauth/start`
 - `GET /api/v1/gbp/oauth/callback`
 - `POST /api/v1/clients/{clientId}/blitz-runs`
@@ -46,6 +50,7 @@ Enterprise autonomous GBP optimization platform with policy-gated execution, att
 - Retry/backoff for action execution.
 - Critical-failure rollback coordinator for reversible actions.
 - BullMQ queue mode (Redis) and in-process fallback mode.
+- Supabase-backed worker repository for persistent run/action state in production.
 
 ### Python Attribution Service (`services/worker-py`)
 
@@ -62,6 +67,12 @@ Enterprise autonomous GBP optimization platform with policy-gated execution, att
 - Service-role-only write boundaries for worker-sensitive tables.
 - Required action fields (`run_id`, `actor`, `policy_snapshot`) enforced non-null.
 - Immutable `audit_events` via mutation-blocking trigger.
+
+### Supabase Hardening (`supabase/migrations/202603041500_policy_and_api_keys.sql`)
+
+- Adds persisted `autopilot_policies`.
+- Adds `api_keys` table plus `app.create_api_key` and `app.resolve_api_key`.
+- Hardens org-scoped RLS using `app.has_org_access(organization_id)` membership checks.
 
 ## Local Development
 
@@ -94,6 +105,50 @@ uvicorn main:app --reload --port 8001
 ```
 
 5. Configure env vars from `.env.example`.
+
+## Supabase Setup
+
+1. Link your Supabase project and run migrations:
+
+```bash
+supabase db push
+```
+
+2. Confirm tables exist:
+   - `autopilot_policies`
+   - `api_keys`
+   - all Blitz v1 tables from `202603041200_blitz_v1.sql`
+
+## Production Env Checklist
+
+### Vercel (`apps/web`)
+
+- `NEXT_PUBLIC_SITE_URL`
+- `APP_ENCRYPTION_KEY`
+- `SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `REDIS_URL` (required to enqueue run jobs)
+
+### Railway (`apps/worker-ts`)
+
+- `REDIS_URL`
+- `BLITZ_WORKER_CONCURRENCY`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `OPENAI_API_KEY`
+
+### Railway (`services/worker-py`)
+
+- `WORKER_PY_HOST`
+- `WORKER_PY_PORT`
+- `REQUEST_TIMEOUT_SECONDS`
+- `GOOGLE_ADS_API_VERSION`
+- Google Ads + GA4 credentials per sync request payload (or mounted secrets file).
 
 ## Testing
 

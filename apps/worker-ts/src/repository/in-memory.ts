@@ -80,7 +80,7 @@ export class InMemoryBlitzRepository implements BlitzRunRepository {
     riskTier: BlitzAction["riskTier"];
     policyDecision: PolicyDecision;
     status: BlitzAction["status"];
-    actor: "system" | "user";
+    actor: "system" | "user" | "operator";
     idempotencyKey: string;
     payload: Record<string, unknown>;
     policySnapshot: Record<string, unknown>;

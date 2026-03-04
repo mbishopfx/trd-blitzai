@@ -7,6 +7,9 @@ import { BlitzRunOrchestrator } from "./orchestrator";
 import { DefaultBlitzPlanner } from "./planner";
 import { startBlitzWorker } from "./queue";
 import { InMemoryBlitzRepository } from "./repository/in-memory";
+import { SupabaseBlitzRepository } from "./repository/supabase";
+import { getSupabaseServiceClient, isSupabaseConfigured } from "./supabase";
+import type { BlitzRunRepository } from "./types";
 
 const logger = pino({ name: "aiblitz-worker" });
 
@@ -42,11 +45,20 @@ async function runInProcess(): Promise<void> {
   logger.info({ runId: run.id }, "completed in-process blitz run");
 }
 
+function createQueueRepository(): BlitzRunRepository {
+  if (isSupabaseConfigured()) {
+    return new SupabaseBlitzRepository(getSupabaseServiceClient());
+  }
+
+  logger.warn("SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not configured; using in-memory repository in queue mode");
+  return new InMemoryBlitzRepository();
+}
+
 async function main(): Promise<void> {
   if (process.env.REDIS_URL) {
     logger.info("starting BullMQ worker mode");
     startBlitzWorker({
-      repository: new InMemoryBlitzRepository(),
+      repository: createQueueRepository(),
       planner: new DefaultBlitzPlanner(),
       executor: new NoopActionExecutor(),
       events: new LogEventPublisher()

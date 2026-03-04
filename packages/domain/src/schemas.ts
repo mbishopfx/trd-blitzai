@@ -53,8 +53,16 @@ export const connectIntegrationSchema = z.object({
   metadata: z.record(z.unknown()).default({})
 });
 
+export const createApiKeySchema = z.object({
+  name: z.string().min(2),
+  scopes: z.array(z.string()).default([]),
+  expiresAt: z.string().datetime().optional(),
+  metadata: z.record(z.unknown()).default({})
+});
+
 export type CreateOrgInput = z.infer<typeof createOrgSchema>;
 export type CreateClientInput = z.infer<typeof createClientSchema>;
 export type CreateBlitzRunInput = z.infer<typeof createBlitzRunSchema>;
 export type UpsertAutopilotPolicyInput = z.infer<typeof upsertAutopilotPolicySchema>;
 export type ConnectIntegrationInput = z.infer<typeof connectIntegrationSchema>;
+export type CreateApiKeyInput = z.infer<typeof createApiKeySchema>;

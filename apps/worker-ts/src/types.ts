@@ -16,7 +16,7 @@ export interface PlannedAction {
   phase: BlitzPhase;
   actionType: BlitzActionType;
   riskTier: RiskTier;
-  actor: "system" | "user";
+  actor: "system" | "user" | "operator";
   payload: Record<string, unknown>;
   isReviewActionForAllRatings?: boolean;
 }
@@ -76,7 +76,7 @@ export interface BlitzRunRepository {
     riskTier: RiskTier;
     policyDecision: PolicyDecision;
     status: BlitzActionStatus;
-    actor: "system" | "user";
+    actor: "system" | "user" | "operator";
     idempotencyKey: string;
     payload: Record<string, unknown>;
     policySnapshot: Record<string, unknown>;

@@ -1,16 +1,26 @@
 import { connectIntegrationSchema } from "@trd-aiblitz/domain";
 import { NextRequest } from "next/server";
-import { getRequestContext } from "@/lib/auth";
+import { getRequestContext, hasRole } from "@/lib/auth";
 import { connectIntegration } from "@/lib/control-plane-store";
 import { encryptJson } from "@/lib/crypto";
 import { fail, ok } from "@/lib/http";
+import { isSupabaseConfigured } from "@/lib/supabase";
 
 interface Params {
   params: { clientId: string };
 }
 
 export async function POST(request: NextRequest, { params }: Params) {
-  const ctx = getRequestContext(request);
+  const ctx = await getRequestContext(request);
+  if (isSupabaseConfigured()) {
+    if (!ctx.isAuthenticated) {
+      return fail("Unauthorized", 401);
+    }
+    if (!hasRole(ctx, "admin")) {
+      return fail("Forbidden", 403);
+    }
+  }
+
   const body = await request.json().catch(() => null);
   const parsed = connectIntegrationSchema.safeParse(body);
 
@@ -18,7 +28,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     return fail("Invalid integration payload", 400, parsed.error.flatten());
   }
 
-  const connection = connectIntegration({
+  const connection = await connectIntegration({
     organizationId: ctx.organizationId,
     clientId: params.clientId,
     provider: "google_ads",

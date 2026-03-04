@@ -1,10 +1,20 @@
 import { buildGbpOAuthUrl } from "@trd-aiblitz/integrations-gbp";
 import { NextRequest } from "next/server";
-import { getRequestContext } from "@/lib/auth";
+import { getRequestContext, hasRole } from "@/lib/auth";
 import { fail, ok } from "@/lib/http";
+import { isSupabaseConfigured } from "@/lib/supabase";
 
 export async function GET(request: NextRequest) {
-  const ctx = getRequestContext(request);
+  const ctx = await getRequestContext(request);
+  if (isSupabaseConfigured()) {
+    if (!ctx.isAuthenticated) {
+      return fail("Unauthorized", 401);
+    }
+    if (!hasRole(ctx, "operator")) {
+      return fail("Forbidden", 403);
+    }
+  }
+
   const clientId = request.nextUrl.searchParams.get("clientId");
   const returnPath = request.nextUrl.searchParams.get("returnPath") ?? "/dashboard/blitz";
 

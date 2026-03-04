@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
     code
   );
 
-  connectIntegration({
+  await connectIntegration({
     organizationId: state.organizationId,
     clientId: state.clientId,
     provider: "gbp",

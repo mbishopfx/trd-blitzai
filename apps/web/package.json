@@ -10,9 +10,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
     "@trd-aiblitz/domain": "file:../../packages/domain",
     "@trd-aiblitz/integrations-attribution": "file:../../packages/integrations-attribution",
     "@trd-aiblitz/integrations-gbp": "file:../../packages/integrations-gbp",
+    "bullmq": "^5.12.12",
     "next": "^14.2.35",
     "react": "18.2.0",
     "react-dom": "18.2.0",

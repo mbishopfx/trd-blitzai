@@ -12,62 +12,62 @@ import {
 } from "../lib/control-plane-store";
 
 describe("control-plane store", () => {
-  it("creates org/client/run and seeds actions", () => {
-    const org = createOrganization({
+  it("creates org/client/run and seeds actions", async () => {
+    const org = await createOrganization({
       name: "Test Org",
       slug: `test-org-${Date.now()}`,
       ownerEmail: "owner@test.com"
     });
 
-    const client = createClient({
+    const client = await createClient({
       organizationId: org.id,
       name: "Client A",
       timezone: "America/Chicago"
     });
 
-    const run = createBlitzRun({
+    const run = await createBlitzRun({
       organizationId: org.id,
       clientId: client.id,
       createdBy: "tester",
       policySnapshot: { revision: 1 }
     });
 
-    expect(getRun(run.id)?.status).toBe("created");
-    expect(listRunActions(run.id).length).toBe(7);
+    expect((await getRun(run.id))?.status).toBe("created");
+    expect((await listRunActions(run.id)).length).toBe(7);
   });
 
-  it("supports status transitions and rollback", () => {
-    const org = createOrganization({
+  it("supports status transitions and rollback", async () => {
+    const org = await createOrganization({
       name: "Rollbacks Org",
       slug: `rollbacks-org-${Date.now()}`,
       ownerEmail: "owner@rollbacks.com"
     });
 
-    const client = createClient({
+    const client = await createClient({
       organizationId: org.id,
       name: "Client B",
       timezone: "America/Chicago"
     });
 
-    const run = createBlitzRun({
+    const run = await createBlitzRun({
       organizationId: org.id,
       clientId: client.id,
       createdBy: "tester",
       policySnapshot: {}
     });
 
-    setRunStatus(run.id, "running");
-    const actions = listRunActions(run.id);
-    const rollback = rollbackAction(actions[0].id, "test");
+    await setRunStatus(run.id, "running");
+    const actions = await listRunActions(run.id);
+    const rollback = await rollbackAction(actions[0].id, "test");
 
     expect(rollback?.action.status).toBe("rolled_back");
   });
 
-  it("returns attribution summary for selected window", () => {
+  it("returns attribution summary for selected window", async () => {
     const organizationId = "org-for-attribution";
     const clientId = `client-${Date.now()}`;
 
-    addAttributionRecord({
+    await addAttributionRecord({
       organizationId,
       clientId,
       locationId: "loc-1",
@@ -83,7 +83,7 @@ describe("control-plane store", () => {
       sourcePayload: {}
     });
 
-    const report = getAttributionWindow(clientId, "7d");
+    const report = await getAttributionWindow(clientId, "7d");
     expect(report.daily.length).toBeGreaterThan(0);
     expect(report.summary.currentConversions).toBeGreaterThan(0);
   });

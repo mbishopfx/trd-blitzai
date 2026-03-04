@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
     "@trd-aiblitz/domain": "file:../../packages/domain",
     "@trd-aiblitz/integrations-gbp": "file:../../packages/integrations-gbp",
     "bullmq": "^5.12.12",
