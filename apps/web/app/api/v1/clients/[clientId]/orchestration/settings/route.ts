@@ -64,9 +64,14 @@ export async function POST(request: NextRequest, { params }: Params) {
     tone: parsed.data.tone,
     objectives: parsed.data.objectives,
     photoAssetUrls: parsed.data.photoAssetUrls,
+    photoAssetIds: parsed.data.photoAssetIds,
     sitemapUrl: parsed.data.sitemapUrl,
     defaultPostUrl: parsed.data.defaultPostUrl,
     reviewReplyStyle: parsed.data.reviewReplyStyle,
+    postFrequencyPerWeek: parsed.data.postFrequencyPerWeek,
+    postWordCountMin: parsed.data.postWordCountMin,
+    postWordCountMax: parsed.data.postWordCountMax,
+    eeatStructuredSnippetEnabled: parsed.data.eeatStructuredSnippetEnabled,
     metadata: parsed.data.metadata
   });
 

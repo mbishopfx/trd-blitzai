@@ -85,24 +85,30 @@ export async function GET(request: NextRequest) {
     metadata.accountDiscoveryError = error instanceof Error ? error.message : String(error);
   }
 
-  const seedConnection = await connectIntegration({
-    organizationId: state.organizationId,
-    clientId: state.clientId,
-    provider: "gbp",
-    providerAccountId,
-    scopes: tokenSet.scopes,
-    encryptedTokenPayload: {
-      token: encryptJson({
-        accessToken: tokenSet.accessToken,
-        refreshToken: tokenSet.refreshToken,
-        expiresAt: tokenSet.expiresAt
+  const encryptedTokenPayload = {
+    token: encryptJson({
+      accessToken: tokenSet.accessToken,
+      refreshToken: tokenSet.refreshToken,
+      expiresAt: tokenSet.expiresAt
+    })
+  };
+
+  const shouldCreateSeedConnector = state.clientId !== "__seed_connector__";
+  const seedConnection = shouldCreateSeedConnector
+    ? await connectIntegration({
+        organizationId: state.organizationId,
+        clientId: state.clientId,
+        provider: "gbp",
+        providerAccountId,
+        scopes: tokenSet.scopes,
+        encryptedTokenPayload,
+        metadata,
+        tokenExpiresAt: tokenSet.expiresAt
       })
-    },
-    metadata,
-    tokenExpiresAt: tokenSet.expiresAt
-  });
+    : null;
 
   let seededClients = 0;
+  let refreshedClients = 0;
   let skippedLocations = 0;
   let seedError: string | null = null;
 
@@ -113,12 +119,22 @@ export async function GET(request: NextRequest) {
 
     const { data: existingLocationRows, error: existingLocationsError } = await supabase
       .from("gbp_locations")
-      .select("location_name")
+      .select("id,location_name,client_id,integration_connection_id")
       .eq("organization_id", state.organizationId);
     if (existingLocationsError) {
       throw new Error(`Failed to read existing GBP locations: ${existingLocationsError.message}`);
     }
-    const existingLocationNames = new Set((existingLocationRows ?? []).map((row) => String(row.location_name)));
+    const existingLocationByName = new Map(
+      (existingLocationRows ?? []).map((row) => [
+        String(row.location_name),
+        {
+          id: String(row.id),
+          clientId: String(row.client_id),
+          integrationConnectionId:
+            typeof row.integration_connection_id === "string" ? row.integration_connection_id : null
+        }
+      ])
+    );
 
     const { data: existingClientRows, error: existingClientError } = await supabase
       .from("clients")
@@ -139,8 +155,50 @@ export async function GET(request: NextRequest) {
           skippedLocations += 1;
           continue;
         }
-        if (existingLocationNames.has(location.name)) {
-          skippedLocations += 1;
+        const existingLocation = existingLocationByName.get(location.name);
+        if (existingLocation) {
+          const locationMetadata: Record<string, unknown> = {
+            accountName: account.name,
+            locationName: location.name,
+            locationId: locationIdFromName(location.name),
+            refreshedAt: new Date().toISOString(),
+            source: "oauth_refresh_v2",
+            seededFromClientId: state.clientId
+          };
+
+          const refreshedConnection = await connectIntegration({
+            organizationId: state.organizationId,
+            clientId: existingLocation.clientId,
+            provider: "gbp",
+            providerAccountId: account.name,
+            scopes: tokenSet.scopes,
+            encryptedTokenPayload: seedConnection?.encryptedTokenPayload ?? encryptedTokenPayload,
+            metadata: locationMetadata,
+            tokenExpiresAt: tokenSet.expiresAt
+          });
+
+          const { error: updateLocationError } = await supabase
+            .from("gbp_locations")
+            .update({
+              integration_connection_id: refreshedConnection.id,
+              account_name: account.name,
+              account_id: accountIdFromName(account.name),
+              title: location.title ?? null,
+              storefront_address: location.storefrontAddress ?? null,
+              primary_phone: location.phoneNumbers?.primaryPhone ?? location.primaryPhone ?? null,
+              website_uri: location.websiteUri ?? null,
+              metadata: {
+                ...locationMetadata,
+                reconnect: true
+              },
+              last_synced_at: new Date().toISOString()
+            })
+            .eq("id", existingLocation.id);
+          if (updateLocationError) {
+            throw new Error(`Failed to refresh gbp_locations row for ${location.name}: ${updateLocationError.message}`);
+          }
+
+          refreshedClients += 1;
           continue;
         }
 
@@ -171,7 +229,7 @@ export async function GET(request: NextRequest) {
           provider: "gbp",
           providerAccountId: account.name,
           scopes: tokenSet.scopes,
-          encryptedTokenPayload: seedConnection.encryptedTokenPayload,
+          encryptedTokenPayload: seedConnection?.encryptedTokenPayload ?? encryptedTokenPayload,
           metadata: locationMetadata,
           tokenExpiresAt: tokenSet.expiresAt
         });
@@ -195,7 +253,11 @@ export async function GET(request: NextRequest) {
           throw new Error(`Failed to insert gbp_locations row for ${location.name}: ${locationInsertError.message}`);
         }
 
-        existingLocationNames.add(location.name);
+        existingLocationByName.set(location.name, {
+          id: `seeded-${client.id}`,
+          clientId: client.id,
+          integrationConnectionId: scopedConnection.id
+        });
         seededClients += 1;
       }
     }
@@ -206,6 +268,7 @@ export async function GET(request: NextRequest) {
   const url = new URL(state.returnPath, siteUrl);
   url.searchParams.set("gbp_connected", "true");
   url.searchParams.set("seeded_clients", String(seededClients));
+  url.searchParams.set("refreshed_clients", String(refreshedClients));
   url.searchParams.set("seeded_skipped", String(skippedLocations));
   if (seedError) {
     url.searchParams.set("gbp_seed_error", seedError.slice(0, 120));

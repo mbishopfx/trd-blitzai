@@ -44,6 +44,7 @@ interface DashboardContextValue {
   setSelectedOrgId: (value: string) => void;
   setRole: (value: OrgRole) => void;
   setApiKey: (value: string) => void;
+  buildAuthHeaders: (options?: { includeContentType?: boolean }) => Record<string, string>;
   request: <T>(path: string, options?: RequestOptions) => Promise<T>;
   reloadOrganizations: () => Promise<void>;
 }
@@ -175,6 +176,31 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     [apiKey, role, selectedOrgId, session?.access_token]
   );
 
+  const buildAuthHeaders = useCallback(
+    (options?: { includeContentType?: boolean }): Record<string, string> => {
+      const headers: Record<string, string> = {
+        Accept: "application/json",
+        "x-user-id": "dashboard-shell",
+        "x-role": role
+      };
+
+      if (selectedOrgId) {
+        headers["x-org-id"] = selectedOrgId;
+      }
+      if (apiKey.trim()) {
+        headers["x-api-key"] = apiKey.trim();
+      }
+      if (session?.access_token) {
+        headers.Authorization = `Bearer ${session.access_token}`;
+      }
+      if (options?.includeContentType) {
+        headers["Content-Type"] = "application/json";
+      }
+      return headers;
+    },
+    [apiKey, role, selectedOrgId, session?.access_token]
+  );
+
   const reloadOrganizations = useCallback(async () => {
     setIsBusy(true);
     try {
@@ -241,6 +267,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       setSelectedOrgId,
       setRole,
       setApiKey,
+      buildAuthHeaders,
       request,
       reloadOrganizations
     }),
@@ -250,6 +277,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       isHydrated,
       organizations,
       reloadOrganizations,
+      buildAuthHeaders,
       request,
       role,
       selectedOrgId,

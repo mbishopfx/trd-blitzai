@@ -5,6 +5,8 @@ import type {
   ActionExecutionResult,
   ActionExecutor,
   BlitzRunRepository,
+  ClientMediaAssetRecord,
+  ClientOrchestrationSettingsRecord,
   IntegrationConnectionRecord
 } from "../types";
 
@@ -29,6 +31,8 @@ interface RunContext {
   client: GbpApiClient;
   locations: ResolvedLocation[];
   warnings: string[];
+  settings: ClientOrchestrationSettingsRecord;
+  mediaAssets: ClientMediaAssetRecord[];
 }
 
 interface ExecutorOptions {
@@ -119,21 +123,134 @@ function parseStarRating(value: unknown): number {
   return 0;
 }
 
+function wordCount(value: string): number {
+  return value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function truncateToMaxWords(value: string, maxWords: number): string {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) {
+    return value.trim();
+  }
+  const trimmed = words.slice(0, maxWords).join(" ").trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function readableObjective(objective: string): string {
+  return objective
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function mediaUrlFromAsset(asset: ClientMediaAssetRecord): string | null {
+  const metadata = asRecord(asset.metadata);
+  const candidates = [
+    typeof metadata.signedUrl === "string" ? metadata.signedUrl : null,
+    typeof metadata.publicUrl === "string" ? metadata.publicUrl : null,
+    typeof metadata.sourceUrl === "string" ? metadata.sourceUrl : null,
+    typeof metadata.url === "string" ? metadata.url : null
+  ].filter((value): value is string => Boolean(value));
+  return candidates[0] ?? null;
+}
+
+function buildEeatLongFormPost(input: {
+  locationTitle: string;
+  objective: string;
+  ordinal: number;
+  tone: string;
+  wordRange: { min: number; max: number };
+  ctaUrl?: string | null;
+}): { longForm: string; snippet: string } {
+  const targetMin = clamp(input.wordRange.min, 120, 2000);
+  const targetMax = clamp(Math.max(targetMin, input.wordRange.max), targetMin, 2000);
+  const targetWords = clamp(Math.round((targetMin + targetMax) / 2), targetMin, targetMax);
+  const objectiveLabel = readableObjective(input.objective);
+  const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+
+  const requiredSections = [
+    `# Local Service Brief (${today})`,
+    "## Experience",
+    `${input.locationTitle} completed this week's ${objectiveLabel} cycle and documented the exact service flow customers asked about most. This update uses a ${input.tone} tone so local buyers can quickly evaluate fit, timelines, and practical outcomes before contacting the team.`,
+    "## Expertise",
+    `The team standardized delivery checkpoints for discovery, planning, execution, and handoff. Each checkpoint includes operating detail, expected turnaround, quality controls, and escalation rules so service quality stays consistent even as request volume changes.`,
+    "## Authoritativeness",
+    `This location benchmarked active local competitors, category intent, and profile visibility factors. Published facts focus on verifiable service details, clear scope boundaries, and location relevance so search systems can classify the business accurately for high-intent queries.`,
+    "## Trust",
+    `Claims in this post are tied to real operations, documented customer interactions, and current availability. Messaging avoids inflated promises and keeps language specific enough for users to validate through direct contact, review history, and current profile metadata.`,
+    "## Structured Snippet",
+    "- Service Availability: verified for current schedule windows\n- Location Relevance: aligned with local intent clusters\n- Operational Proof: process checkpoints and response SLAs documented\n- Reputation Signals: review response workflow active with escalation guardrails",
+    "## Action Summary",
+    `This is entry #${input.ordinal} in the current Blitz content sequence. The post captures EEAT-aligned proof points, practical delivery detail, and next-step guidance for local search users evaluating providers right now.`
+  ];
+
+  const supplementalParagraphs = [
+    `${input.locationTitle} also documented common pre-service questions so potential customers can compare options before requesting work. This includes expected prep steps, required customer inputs, and realistic completion windows tied to service type.`,
+    `Internal QA now logs completion standards for every published service update, including factual accuracy checks, local relevance checks, and final compliance review before content is pushed live. This protects consistency across profile, website, and ad messaging.`,
+    `Customer communication standards were refreshed to include clearer status updates during active jobs, faster follow-up after delivery, and transparent escalation paths when service issues appear. These operating changes are designed to improve trust and repeat engagement signals.`,
+    `The profile content strategy now emphasizes concise, intent-matched language that maps directly to service outcomes customers care about: turnaround speed, scope clarity, and reliability. That keeps the listing useful for both users and AI-driven local discovery systems.`,
+    `Performance tracking remains active across calls, direction requests, profile clicks, and review patterns. The team uses these signals to tune the next publishing cycle and keep future updates grounded in what local users are actually doing.`,
+    `Media and post cadence controls are synchronized with policy limits so activity remains natural and sustainable over time. This prevents inconsistent burst behavior while still maintaining freshness signals that influence local visibility.`,
+    `Operational details, service constraints, and fulfillment windows are reviewed weekly to ensure published information stays current. If delivery constraints change, the content plan is updated immediately to avoid stale or misleading statements.`
+  ];
+
+  let longForm = requiredSections.join("\n\n");
+  let paragraphIndex = 0;
+  while (wordCount(longForm) < targetWords) {
+    const paragraph = supplementalParagraphs[paragraphIndex % supplementalParagraphs.length];
+    longForm = `${longForm}\n\n${paragraph}`;
+    paragraphIndex += 1;
+  }
+
+  if (wordCount(longForm) > targetMax) {
+    longForm = truncateToMaxWords(longForm, targetMax);
+  }
+
+  if (input.ctaUrl) {
+    longForm = `${longForm}\n\n## Next Step\nRead more or request service: ${input.ctaUrl}`;
+    if (wordCount(longForm) > targetMax) {
+      longForm = truncateToMaxWords(longForm, targetMax);
+    }
+  }
+
+  const summaryHeader = `${input.locationTitle} local update:`;
+  const snippetRaw = `${summaryHeader} Experience, expertise, authority, and trust signals were refreshed with structured service facts, operational detail, and customer-intent guidance from the latest ${objectiveLabel} cycle. ${input.ctaUrl ? `More details: ${input.ctaUrl}` : ""}`.trim();
+  const snippet = snippetRaw.slice(0, 1450);
+
+  return {
+    longForm,
+    snippet
+  };
+}
+
 function replyForReview(input: {
   reviewerName: string;
   starRating: number;
   comment: string;
   locationTitle: string;
+  tone: string;
+  style: string;
 }): string {
   const name = input.reviewerName.trim() || "there";
   const intro = `Hi ${name}, thank you for your feedback.`;
+  const tonePrefix = input.tone.includes("friendly") ? "We appreciate you choosing us." : "";
   if (input.starRating >= 4) {
-    return `${intro} We appreciate your ${input.starRating}-star review for ${input.locationTitle}. We look forward to serving you again soon.`;
+    return `${intro} ${tonePrefix} We appreciate your ${input.starRating}-star review for ${input.locationTitle}. We look forward to serving you again soon.`.replace(/\s+/g, " ").trim();
   }
   if (input.starRating === 3) {
-    return `${intro} We appreciate you choosing ${input.locationTitle} and will use your feedback to keep improving.`;
+    return `${intro} ${tonePrefix} We appreciate you choosing ${input.locationTitle} and will use your feedback to keep improving.`.replace(/\s+/g, " ").trim();
   }
-  return `${intro} We're sorry your experience at ${input.locationTitle} did not meet expectations. Please contact our team so we can make this right.`;
+  const directEnding = input.style.toLowerCase().includes("direct")
+    ? "Please contact our team today so we can fix this immediately."
+    : "Please contact our team so we can make this right.";
+  return `${intro} We're sorry your experience at ${input.locationTitle} did not meet expectations. ${directEnding}`.replace(/\s+/g, " ").trim();
 }
 
 function buildPostSummary(input: {
@@ -258,7 +375,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
 
   private async loadRunContext(run: BlitzRun, action: BlitzAction): Promise<RunContext> {
     const cached = this.contextCache.get(run.id);
-    if (cached && !this.isTokenExpiring(cached.token, 90)) {
+    if (cached && !this.isTokenExpiring(cached.token, 900)) {
       return cached;
     }
 
@@ -277,12 +394,17 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       throw new Error("No GBP locations found for the connected account scope.");
     }
 
+    const settings = await this.deps.repository.getClientOrchestrationSettings(run.clientId);
+    const mediaAssets = await this.deps.repository.listClientMediaAssets(run.clientId);
+
     const context: RunContext = {
       connection,
       token,
       client,
       locations: resolved.locations,
-      warnings: resolved.warnings
+      warnings: resolved.warnings,
+      settings,
+      mediaAssets
     };
 
     this.contextCache.set(run.id, context);
@@ -320,16 +442,19 @@ export class GbpLiveActionExecutor implements ActionExecutor {
 
     const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
     const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-    if (!clientId || !clientSecret || !siteUrl) {
-      throw new Error("Google OAuth env missing. Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, NEXT_PUBLIC_SITE_URL.");
+    const redirectUri =
+      process.env.GOOGLE_OAUTH_REDIRECT_URI?.trim() ??
+      process.env.NEXT_PUBLIC_SITE_URL?.trim()?.concat("/api/v1/gbp/oauth/callback") ??
+      "https://localhost/api/v1/gbp/oauth/callback";
+    if (!clientId || !clientSecret) {
+      throw new Error("Google OAuth env missing. Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET.");
     }
 
     const refreshed = await refreshAccessToken(
       {
         clientId,
         clientSecret,
-        redirectUri: `${siteUrl}/api/v1/gbp/oauth/callback`
+        redirectUri
       },
       refreshToken
     );
@@ -548,48 +673,95 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     objective: string;
   }): Promise<Record<string, unknown>> {
     if (input.objective === "schedule_follow_up_posts") {
+      const cadence = Math.max(0, input.context.settings.postFrequencyPerWeek);
+      const windows = cadence > 0
+        ? Array.from({ length: cadence }, (_value, index) => `+${index + 1}d`)
+        : toStringArray(input.action.payload.windows);
       return {
         objective: input.objective,
         status: "scheduled_metadata_only",
-        windows: toStringArray(input.action.payload.windows),
+        windows,
+        postFrequencyPerWeek: input.context.settings.postFrequencyPerWeek,
         locationCount: input.context.locations.length
       };
     }
 
+    const postCountFromSettings = Math.max(1, input.context.settings.postFrequencyPerWeek || 1);
     const postCount = Math.max(
       1,
       Math.min(
         this.options.maxPostBurst,
-        toNumber(input.action.payload.postCount, Math.min(input.context.locations.length, 5))
+        toNumber(input.action.payload.postCount, postCountFromSettings)
       )
     );
-    const mediaUrl = typeof input.action.payload.mediaUrl === "string" ? input.action.payload.mediaUrl : undefined;
     const ctaUrlFromPayload = typeof input.action.payload.ctaUrl === "string" ? input.action.payload.ctaUrl : undefined;
+    const selectedAssetIds = new Set(input.context.settings.photoAssetIds);
+    const allowedAssets = input.context.mediaAssets.filter((asset) => {
+      if (!asset.isAllowedForPosts) {
+        return false;
+      }
+      if (selectedAssetIds.size > 0 && !selectedAssetIds.has(asset.id)) {
+        return false;
+      }
+      return true;
+    });
     const publishedPosts: Array<Record<string, unknown>> = [];
     const failed: Array<Record<string, unknown>> = [];
+    const generatedLongFormDrafts: Array<Record<string, unknown>> = [];
 
     for (let index = 0; index < postCount; index += 1) {
       const location = input.context.locations[index % input.context.locations.length];
-      const summary = buildPostSummary({
+      const selectedAsset =
+        allowedAssets.length > 0 ? allowedAssets[index % allowedAssets.length] : null;
+      const mediaUrl =
+        (typeof input.action.payload.mediaUrl === "string" && input.action.payload.mediaUrl) ||
+        (selectedAsset ? mediaUrlFromAsset(selectedAsset) : null) ||
+        undefined;
+      const ctaUrl = ctaUrlFromPayload ?? input.context.settings.defaultPostUrl ?? location.websiteUri ?? undefined;
+
+      const eeatDraft = buildEeatLongFormPost({
         locationTitle: location.title ?? "our business",
         objective: input.objective,
         ordinal: index + 1,
-        payload: input.action.payload
+        tone: input.context.settings.tone,
+        wordRange: {
+          min: input.context.settings.postWordCountMin,
+          max: input.context.settings.postWordCountMax
+        },
+        ctaUrl
       });
+      const summary = input.context.settings.eeatStructuredSnippetEnabled
+        ? eeatDraft.snippet
+        : buildPostSummary({
+            locationTitle: location.title ?? "our business",
+            objective: input.objective,
+            ordinal: index + 1,
+            payload: input.action.payload
+          });
 
       try {
         const response = await input.context.client.publishLocalPost(location.accountId, location.locationId, {
           summary,
           topicType: "STANDARD",
           mediaUrl,
-          ctaUrl: ctaUrlFromPayload ?? location.websiteUri ?? undefined
+          ctaUrl
+        });
+        generatedLongFormDrafts.push({
+          locationName: location.locationName,
+          locationId: location.locationId,
+          mediaAssetId: selectedAsset?.id ?? null,
+          ctaUrl,
+          wordCount: wordCount(eeatDraft.longForm),
+          longForm: eeatDraft.longForm
         });
         publishedPosts.push({
           name: response.name,
           accountId: location.accountId,
           locationId: location.locationId,
           locationName: location.locationName,
-          title: location.title
+          title: location.title,
+          mediaAssetId: selectedAsset?.id ?? null,
+          ctaUrl
         });
       } catch (error) {
         failed.push({
@@ -609,7 +781,14 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       objective: input.objective,
       postCountRequested: postCount,
       postCountPublished: publishedPosts.length,
+      postFrequencyPerWeek: input.context.settings.postFrequencyPerWeek,
+      eeatStructuredSnippetEnabled: input.context.settings.eeatStructuredSnippetEnabled,
+      postWordRange: {
+        min: input.context.settings.postWordCountMin,
+        max: input.context.settings.postWordCountMax
+      },
       publishedPosts,
+      generatedLongFormDrafts,
       failedPublishes: failed
     };
   }
@@ -641,16 +820,32 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         }
 
         const reviewId = parseReviewId(review.name, review.reviewId);
+        const alreadyPosted = await this.deps.repository.hasPostedReplyHistory(input.action.clientId ?? input.context.connection.clientId, reviewId);
+        if (alreadyPosted) {
+          continue;
+        }
         const starRating = parseStarRating(review.starRating);
         const replyText = replyForReview({
           reviewerName: review.reviewer?.displayName ?? "there",
           starRating,
           comment: review.comment ?? "",
-          locationTitle: location.title ?? "our business"
+          locationTitle: location.title ?? "our business",
+          tone: input.context.settings.tone,
+          style: input.context.settings.reviewReplyStyle
         });
 
         try {
           await input.context.client.postReviewReply(location.accountId, location.locationId, reviewId, replyText);
+          await this.deps.repository.recordReviewReplyHistory({
+            organizationId: input.action.organizationId ?? input.context.connection.organizationId,
+            clientId: input.action.clientId ?? input.context.connection.clientId,
+            locationId: location.locationId,
+            reviewId,
+            reviewRating: starRating,
+            reviewText: review.comment ?? "",
+            replyText,
+            replyStatus: "posted"
+          });
           replied.push({
             reviewName: review.name,
             reviewId,
@@ -659,6 +854,17 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             rating: starRating
           });
         } catch (error) {
+          await this.deps.repository.recordReviewReplyHistory({
+            organizationId: input.action.organizationId ?? input.context.connection.organizationId,
+            clientId: input.action.clientId ?? input.context.connection.clientId,
+            locationId: location.locationId,
+            reviewId,
+            reviewRating: starRating,
+            reviewText: review.comment ?? "",
+            replyText,
+            replyStatus: "failed",
+            error: error instanceof Error ? error.message : String(error)
+          });
           failed.push({
             reviewName: review.name,
             reviewId,

@@ -56,11 +56,24 @@ export const connectIntegrationSchema = z.object({
 export const upsertClientOrchestrationSettingsSchema = z.object({
   tone: z.string().min(2).max(120),
   objectives: z.array(z.string().min(2).max(180)).min(1).max(20),
-  photoAssetUrls: z.array(z.string().url()).max(200),
+  photoAssetUrls: z.array(z.string().url()).max(200).default([]),
+  photoAssetIds: z.array(z.string().uuid()).max(200).default([]),
   sitemapUrl: z.string().url().nullable(),
   defaultPostUrl: z.string().url().nullable(),
   reviewReplyStyle: z.string().min(2).max(80),
+  postFrequencyPerWeek: z.number().int().min(0).max(21).default(3),
+  postWordCountMin: z.number().int().min(120).max(2000).default(500),
+  postWordCountMax: z.number().int().min(120).max(2000).default(800),
+  eeatStructuredSnippetEnabled: z.boolean().default(true),
   metadata: z.record(z.unknown()).default({})
+}).superRefine((value, ctx) => {
+  if (value.postWordCountMin > value.postWordCountMax) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["postWordCountMin"],
+      message: "postWordCountMin must be less than or equal to postWordCountMax"
+    });
+  }
 });
 
 export const createApiKeySchema = z.object({

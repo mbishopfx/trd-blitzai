@@ -59,7 +59,7 @@ export interface GbpPostPayload {
 export interface GbpApiConfig {
   clientId: string;
   clientSecret: string;
-  redirectUri: string;
+  redirectUri?: string;
 }
 
 export interface GbpPost {

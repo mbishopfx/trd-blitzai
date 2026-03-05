@@ -146,8 +146,11 @@ async function resolveRuntimeContext(clientId: string): Promise<RuntimeContext> 
   if (isExpiringSoon(token.expiresAt) && token.refreshToken) {
     const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
     const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-    if (!oauthClientId || !oauthClientSecret || !siteUrl) {
+    const redirectUri =
+      process.env.GOOGLE_OAUTH_REDIRECT_URI?.trim() ??
+      process.env.NEXT_PUBLIC_SITE_URL?.trim()?.concat("/api/v1/gbp/oauth/callback") ??
+      "https://localhost/api/v1/gbp/oauth/callback";
+    if (!oauthClientId || !oauthClientSecret) {
       throw new Error("Google OAuth environment variables are not configured for token refresh");
     }
 
@@ -155,7 +158,7 @@ async function resolveRuntimeContext(clientId: string): Promise<RuntimeContext> 
       {
         clientId: oauthClientId,
         clientSecret: oauthClientSecret,
-        redirectUri: `${siteUrl}/api/v1/gbp/oauth/callback`
+        redirectUri
       },
       token.refreshToken
     );
@@ -279,6 +282,28 @@ async function upsertReplyHistory(input: {
   );
 }
 
+async function hasPostedReplyHistory(clientId: string, reviewId: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) {
+    return false;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data, error } = await supabase
+    .from("review_reply_history")
+    .select("id")
+    .eq("client_id", clientId)
+    .eq("review_id", reviewId)
+    .eq("reply_status", "posted")
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to check review reply history: ${error.message}`);
+  }
+
+  return Boolean(data);
+}
+
 export async function listClientGbpReviews(clientId: string, limit = 100): Promise<{
   location: { accountName: string; locationName: string; locationTitle: string };
   reviews: ClientReviewRecord[];
@@ -326,6 +351,17 @@ export async function postClientReviewReply(input: {
   comment: string;
 }): Promise<{ reviewId: string; postedAt: string }> {
   const runtime = await resolveRuntimeContext(input.clientId);
+  const reviews = await runtime.client.fetchReviews(runtime.accountId, runtime.locationId);
+  const targetReview = reviews.find((review) => parseReviewId(review) === input.reviewId);
+
+  if (targetReview?.reviewReply?.comment) {
+    throw new Error(`Review ${input.reviewId} already has a reply on GBP`);
+  }
+
+  if (await hasPostedReplyHistory(runtime.clientId, input.reviewId)) {
+    throw new Error(`Review ${input.reviewId} already has a posted reply in Blitz history`);
+  }
+
   const postedAt = new Date().toISOString();
 
   await runtime.client.postReviewReply(runtime.accountId, runtime.locationId, input.reviewId, input.comment);
@@ -373,6 +409,11 @@ export async function autoReplyClientReviews(input: {
     const reviewText = review.comment ?? "";
 
     if (review.reviewReply?.comment) {
+      skipped += 1;
+      continue;
+    }
+
+    if (await hasPostedReplyHistory(runtime.clientId, reviewId)) {
       skipped += 1;
       continue;
     }

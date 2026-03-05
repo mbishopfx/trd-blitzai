@@ -47,20 +47,9 @@ export class GbpApiClient {
 
   async fetchLocation(locationName: string): Promise<GbpLocation | null> {
     const url = new URL(`https://mybusinessbusinessinformation.googleapis.com/v1/${locationName}`);
-    url.searchParams.set(
-      "readMask",
-      [
-        "name",
-        "title",
-        "storefrontAddress",
-        "websiteUri",
-        "phoneNumbers",
-        "regularHours",
-        "categories",
-        "attributes",
-        "profile"
-      ].join(",")
-    );
+    // Keep to broadly supported Business Information fields to avoid INVALID_ARGUMENT
+    // when accounts are on mixed schema versions.
+    url.searchParams.set("readMask", ["name", "title", "storefrontAddress", "websiteUri", "phoneNumbers", "regularHours"].join(","));
 
     const result = await this.request<GbpLocation>(url.toString());
     return result ?? null;

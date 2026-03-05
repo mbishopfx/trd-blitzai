@@ -58,9 +58,30 @@ export interface ClientOrchestrationSettings {
   tone: string;
   objectives: string[];
   photoAssetUrls: string[];
+  photoAssetIds: string[];
   sitemapUrl: string | null;
   defaultPostUrl: string | null;
   reviewReplyStyle: string;
+  postFrequencyPerWeek: number;
+  postWordCountMin: number;
+  postWordCountMax: number;
+  eeatStructuredSnippetEnabled: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClientMediaAsset {
+  id: string;
+  organizationId: string;
+  clientId: string;
+  storageBucket: string;
+  storagePath: string;
+  fileName: string;
+  mimeType: string | null;
+  bytes: number | null;
+  isAllowedForPosts: boolean;
+  tags: string[];
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -81,6 +102,7 @@ interface Store {
   actions: Map<string, BlitzAction>;
   autopilotPolicies: Map<string, BlitzAutopilotPolicy>;
   orchestrationSettings: Map<string, ClientOrchestrationSettings>;
+  mediaAssets: Map<string, ClientMediaAsset>;
   integrations: Map<string, IntegrationConnection>;
   rollbacks: Map<string, RollbackRecord>;
   attribution: DailyChannelMetric[];
@@ -119,6 +141,7 @@ function getStore(): Store {
       actions: new Map(),
       autopilotPolicies: new Map(),
       orchestrationSettings: new Map(),
+      mediaAssets: new Map(),
       integrations: new Map(),
       rollbacks: new Map(),
       attribution: []
@@ -177,9 +200,14 @@ function defaultOrchestrationSettings(
       "Publish location-aware GBP content consistently"
     ],
     photoAssetUrls: [],
+    photoAssetIds: [],
     sitemapUrl: null,
     defaultPostUrl: null,
     reviewReplyStyle: "balanced",
+    postFrequencyPerWeek: 3,
+    postWordCountMin: 500,
+    postWordCountMax: 800,
+    eeatStructuredSnippetEnabled: true,
     metadata: {},
     createdAt: nowIso(),
     updatedAt: nowIso()
@@ -266,15 +294,42 @@ function mapIntegrationRow(row: Record<string, unknown>): IntegrationConnection 
 }
 
 function mapOrchestrationSettingsRow(row: Record<string, unknown>): ClientOrchestrationSettings {
+  const frequencyRaw = row.post_frequency_per_week;
+  const wordMinRaw = row.post_word_count_min;
+  const wordMaxRaw = row.post_word_count_max;
   return {
     clientId: String(row.client_id),
     organizationId: String(row.organization_id),
     tone: typeof row.tone === "string" ? row.tone : "professional-local-expert",
     objectives: Array.isArray(row.objectives) ? row.objectives.map(String) : [],
     photoAssetUrls: Array.isArray(row.photo_asset_urls) ? row.photo_asset_urls.map(String) : [],
+    photoAssetIds: Array.isArray(row.photo_asset_ids) ? row.photo_asset_ids.map(String) : [],
     sitemapUrl: typeof row.sitemap_url === "string" ? row.sitemap_url : null,
     defaultPostUrl: typeof row.default_post_url === "string" ? row.default_post_url : null,
     reviewReplyStyle: typeof row.review_reply_style === "string" ? row.review_reply_style : "balanced",
+    postFrequencyPerWeek:
+      frequencyRaw === undefined || frequencyRaw === null ? 3 : numberValue(frequencyRaw),
+    postWordCountMin: wordMinRaw === undefined || wordMinRaw === null ? 500 : numberValue(wordMinRaw),
+    postWordCountMax: wordMaxRaw === undefined || wordMaxRaw === null ? 800 : numberValue(wordMaxRaw),
+    eeatStructuredSnippetEnabled: row.eeat_structured_snippet_enabled !== false,
+    metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? nowIso())
+  };
+}
+
+function mapClientMediaAssetRow(row: Record<string, unknown>): ClientMediaAsset {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    clientId: String(row.client_id),
+    storageBucket: String(row.storage_bucket),
+    storagePath: String(row.storage_path),
+    fileName: String(row.file_name),
+    mimeType: typeof row.mime_type === "string" ? row.mime_type : null,
+    bytes: row.bytes === null || row.bytes === undefined ? null : numberValue(row.bytes),
+    isAllowedForPosts: row.is_allowed_for_posts !== false,
+    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
     metadata: (row.metadata as Record<string, unknown> | null) ?? {},
     createdAt: String(row.created_at ?? nowIso()),
     updatedAt: String(row.updated_at ?? nowIso())
@@ -502,6 +557,56 @@ export async function getClientById(clientId: string): Promise<Client | null> {
   }
 
   return mapClientRow(row as Record<string, unknown>);
+}
+
+export async function deleteClientById(
+  clientId: string,
+  organizationId: string
+): Promise<{ deleted: boolean }> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const client = store.clients.get(clientId);
+    if (!client || client.organizationId !== organizationId) {
+      return { deleted: false };
+    }
+
+    store.clients.delete(clientId);
+    store.autopilotPolicies.delete(clientId);
+    store.orchestrationSettings.delete(clientId);
+    for (const [assetId, asset] of store.mediaAssets.entries()) {
+      if (asset.clientId === clientId) {
+        store.mediaAssets.delete(assetId);
+      }
+    }
+    for (const [integrationId, integration] of store.integrations.entries()) {
+      if (integration.clientId === clientId) {
+        store.integrations.delete(integrationId);
+      }
+    }
+    for (const [runId, run] of store.runs.entries()) {
+      if (run.clientId === clientId) {
+        store.runs.delete(runId);
+      }
+    }
+    for (const [actionId, action] of store.actions.entries()) {
+      if (action.clientId === clientId) {
+        store.actions.delete(actionId);
+      }
+    }
+    return { deleted: true };
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { error } = await supabase
+    .from("clients")
+    .delete()
+    .eq("id", clientId)
+    .eq("organization_id", organizationId);
+  if (error) {
+    throw new Error(`Failed to delete client: ${error.message}`);
+  }
+
+  return { deleted: true };
 }
 
 export async function createBlitzRun(input: {
@@ -954,6 +1059,176 @@ export async function listClientIntegrations(clientId: string): Promise<Integrat
   return (rows ?? []).map((row) => mapIntegrationRow(row as Record<string, unknown>));
 }
 
+export async function createClientMediaAsset(input: {
+  organizationId: string;
+  clientId: string;
+  storageBucket: string;
+  storagePath: string;
+  fileName: string;
+  mimeType?: string | null;
+  bytes?: number | null;
+  isAllowedForPosts?: boolean;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+}): Promise<ClientMediaAsset> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const id = randomUUID();
+    const asset: ClientMediaAsset = {
+      id,
+      organizationId: input.organizationId,
+      clientId: input.clientId,
+      storageBucket: input.storageBucket,
+      storagePath: input.storagePath,
+      fileName: input.fileName,
+      mimeType: input.mimeType ?? null,
+      bytes: input.bytes ?? null,
+      isAllowedForPosts: input.isAllowedForPosts !== false,
+      tags: input.tags ?? [],
+      metadata: input.metadata ?? {},
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+    store.mediaAssets.set(id, asset);
+    return asset;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: row, error } = await supabase
+    .from("client_media_assets")
+    .insert({
+      organization_id: input.organizationId,
+      client_id: input.clientId,
+      storage_bucket: input.storageBucket,
+      storage_path: input.storagePath,
+      file_name: input.fileName,
+      mime_type: input.mimeType ?? null,
+      bytes: input.bytes ?? null,
+      is_allowed_for_posts: input.isAllowedForPosts !== false,
+      tags: input.tags ?? [],
+      metadata: input.metadata ?? {}
+    })
+    .select(
+      "id,organization_id,client_id,storage_bucket,storage_path,file_name,mime_type,bytes,is_allowed_for_posts,tags,metadata,created_at,updated_at"
+    )
+    .single();
+  if (error || !row) {
+    throw new Error(`Failed to create client media asset: ${error?.message ?? "unknown error"}`);
+  }
+
+  return mapClientMediaAssetRow(row as Record<string, unknown>);
+}
+
+export async function listClientMediaAssets(clientId: string): Promise<ClientMediaAsset[]> {
+  if (!isSupabaseConfigured()) {
+    return [...getStore().mediaAssets.values()]
+      .filter((asset) => asset.clientId === clientId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: rows, error } = await supabase
+    .from("client_media_assets")
+    .select(
+      "id,organization_id,client_id,storage_bucket,storage_path,file_name,mime_type,bytes,is_allowed_for_posts,tags,metadata,created_at,updated_at"
+    )
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    throw new Error(`Failed to list client media assets: ${error.message}`);
+  }
+
+  return (rows ?? []).map((row) => mapClientMediaAssetRow(row as Record<string, unknown>));
+}
+
+export async function getClientMediaAssetById(assetId: string): Promise<ClientMediaAsset | null> {
+  if (!isSupabaseConfigured()) {
+    return getStore().mediaAssets.get(assetId) ?? null;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: row, error } = await supabase
+    .from("client_media_assets")
+    .select(
+      "id,organization_id,client_id,storage_bucket,storage_path,file_name,mime_type,bytes,is_allowed_for_posts,tags,metadata,created_at,updated_at"
+    )
+    .eq("id", assetId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load client media asset: ${error.message}`);
+  }
+
+  return row ? mapClientMediaAssetRow(row as Record<string, unknown>) : null;
+}
+
+export async function updateClientMediaAsset(
+  assetId: string,
+  input: {
+    isAllowedForPosts?: boolean;
+    tags?: string[];
+    metadata?: Record<string, unknown>;
+  }
+): Promise<ClientMediaAsset | null> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const existing = store.mediaAssets.get(assetId);
+    if (!existing) {
+      return null;
+    }
+
+    const next: ClientMediaAsset = {
+      ...existing,
+      isAllowedForPosts: input.isAllowedForPosts ?? existing.isAllowedForPosts,
+      tags: input.tags ?? existing.tags,
+      metadata: input.metadata ?? existing.metadata,
+      updatedAt: nowIso()
+    };
+    store.mediaAssets.set(assetId, next);
+    return next;
+  }
+
+  const patch: Record<string, unknown> = {};
+  if (input.isAllowedForPosts !== undefined) {
+    patch.is_allowed_for_posts = input.isAllowedForPosts;
+  }
+  if (input.tags !== undefined) {
+    patch.tags = input.tags;
+  }
+  if (input.metadata !== undefined) {
+    patch.metadata = input.metadata;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: row, error } = await supabase
+    .from("client_media_assets")
+    .update(patch)
+    .eq("id", assetId)
+    .select(
+      "id,organization_id,client_id,storage_bucket,storage_path,file_name,mime_type,bytes,is_allowed_for_posts,tags,metadata,created_at,updated_at"
+    )
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to update client media asset: ${error.message}`);
+  }
+
+  return row ? mapClientMediaAssetRow(row as Record<string, unknown>) : null;
+}
+
+export async function deleteClientMediaAsset(assetId: string): Promise<{ deleted: boolean }> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const deleted = store.mediaAssets.delete(assetId);
+    return { deleted };
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { error } = await supabase.from("client_media_assets").delete().eq("id", assetId);
+  if (error) {
+    throw new Error(`Failed to delete client media asset: ${error.message}`);
+  }
+  return { deleted: true };
+}
+
 export async function upsertClientOrchestrationSettings(
   clientId: string,
   input: Omit<
@@ -995,9 +1270,14 @@ export async function upsertClientOrchestrationSettings(
         tone: input.tone,
         objectives: input.objectives,
         photo_asset_urls: input.photoAssetUrls,
+        photo_asset_ids: input.photoAssetIds,
         sitemap_url: input.sitemapUrl,
         default_post_url: input.defaultPostUrl,
         review_reply_style: input.reviewReplyStyle,
+        post_frequency_per_week: input.postFrequencyPerWeek,
+        post_word_count_min: input.postWordCountMin,
+        post_word_count_max: input.postWordCountMax,
+        eeat_structured_snippet_enabled: input.eeatStructuredSnippetEnabled,
         metadata: input.metadata
       },
       {
@@ -1005,7 +1285,7 @@ export async function upsertClientOrchestrationSettings(
       }
     )
     .select(
-      "organization_id,client_id,tone,objectives,photo_asset_urls,sitemap_url,default_post_url,review_reply_style,metadata,created_at,updated_at"
+      "organization_id,client_id,tone,objectives,photo_asset_urls,photo_asset_ids,sitemap_url,default_post_url,review_reply_style,post_frequency_per_week,post_word_count_min,post_word_count_max,eeat_structured_snippet_enabled,metadata,created_at,updated_at"
     )
     .single();
   if (error || !row) {
@@ -1042,7 +1322,7 @@ export async function getClientOrchestrationSettings(clientId: string): Promise<
   const { data: row, error } = await supabase
     .from("client_orchestration_settings")
     .select(
-      "organization_id,client_id,tone,objectives,photo_asset_urls,sitemap_url,default_post_url,review_reply_style,metadata,created_at,updated_at"
+      "organization_id,client_id,tone,objectives,photo_asset_urls,photo_asset_ids,sitemap_url,default_post_url,review_reply_style,post_frequency_per_week,post_word_count_min,post_word_count_max,eeat_structured_snippet_enabled,metadata,created_at,updated_at"
     )
     .eq("client_id", clientId)
     .maybeSingle();
@@ -1059,9 +1339,14 @@ export async function getClientOrchestrationSettings(clientId: string): Promise<
         "Publish location-aware GBP content consistently"
       ],
       photoAssetUrls: [],
+      photoAssetIds: [],
       sitemapUrl: null,
       defaultPostUrl: null,
       reviewReplyStyle: "balanced",
+      postFrequencyPerWeek: 3,
+      postWordCountMin: 500,
+      postWordCountMax: 800,
+      eeatStructuredSnippetEnabled: true,
       metadata: {}
     });
   }

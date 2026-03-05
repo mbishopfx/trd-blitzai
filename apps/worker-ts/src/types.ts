@@ -90,6 +90,53 @@ export interface IntegrationConnectionPatch {
   isActive?: boolean;
 }
 
+export interface ClientOrchestrationSettingsRecord {
+  clientId: string;
+  organizationId: string;
+  tone: string;
+  objectives: string[];
+  photoAssetUrls: string[];
+  photoAssetIds: string[];
+  sitemapUrl: string | null;
+  defaultPostUrl: string | null;
+  reviewReplyStyle: string;
+  postFrequencyPerWeek: number;
+  postWordCountMin: number;
+  postWordCountMax: number;
+  eeatStructuredSnippetEnabled: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClientMediaAssetRecord {
+  id: string;
+  organizationId: string;
+  clientId: string;
+  storageBucket: string;
+  storagePath: string;
+  fileName: string;
+  mimeType: string | null;
+  bytes: number | null;
+  isAllowedForPosts: boolean;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewReplyHistoryRecord {
+  organizationId: string;
+  clientId: string;
+  locationId: string;
+  reviewId: string;
+  reviewRating: number;
+  reviewText: string;
+  replyText: string;
+  replyStatus: "posted" | "failed";
+  error?: string | null;
+}
+
 export interface BlitzRunRepository {
   getRun(runId: string): Promise<BlitzRun | null>;
   listActions(runId: string): Promise<BlitzAction[]>;
@@ -121,6 +168,10 @@ export interface BlitzRunRepository {
     provider: IntegrationConnectionRecord["provider"]
   ): Promise<IntegrationConnectionRecord | null>;
   updateIntegrationConnection(connectionId: string, patch: IntegrationConnectionPatch): Promise<void>;
+  getClientOrchestrationSettings(clientId: string): Promise<ClientOrchestrationSettingsRecord>;
+  listClientMediaAssets(clientId: string): Promise<ClientMediaAssetRecord[]>;
+  hasPostedReplyHistory(clientId: string, reviewId: string): Promise<boolean>;
+  recordReviewReplyHistory(input: ReviewReplyHistoryRecord): Promise<void>;
 }
 
 export interface OrchestratorOptions {

@@ -132,6 +132,7 @@ supabase db push
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REDIRECT_URI` (optional override; defaults to `${NEXT_PUBLIC_SITE_URL}/api/v1/gbp/oauth/callback`)
 - `REDIS_URL` (required to enqueue run jobs)
 
 ### Railway (`apps/worker-ts`)
@@ -141,6 +142,9 @@ supabase db push
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `OPENAI_API_KEY`
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REDIRECT_URI` (optional override; fallback works without `NEXT_PUBLIC_SITE_URL`)
 
 ### Railway (`services/worker-py`)
 

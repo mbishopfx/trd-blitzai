@@ -11,8 +11,11 @@ import type {
 import type {
   ActionLogRecord,
   BlitzRunRepository,
+  ClientMediaAssetRecord,
+  ClientOrchestrationSettingsRecord,
   IntegrationConnectionPatch,
   IntegrationConnectionRecord,
+  ReviewReplyHistoryRecord,
   RollbackRecord
 } from "../types";
 
@@ -20,6 +23,9 @@ interface InMemoryState {
   runs: Map<string, BlitzRun>;
   actions: Map<string, BlitzAction>;
   policies: Map<string, BlitzAutopilotPolicy>;
+  orchestrationSettings: Map<string, ClientOrchestrationSettingsRecord>;
+  mediaAssets: Map<string, ClientMediaAssetRecord>;
+  reviewReplies: Map<string, ReviewReplyHistoryRecord>;
   logs: ActionLogRecord[];
   rollbacks: RollbackRecord[];
   integrations: Map<string, IntegrationConnectionRecord>;
@@ -49,6 +55,31 @@ function defaultPolicy(clientId: string): BlitzAutopilotPolicy {
   };
 }
 
+function defaultOrchestrationSettings(clientId: string): ClientOrchestrationSettingsRecord {
+  return {
+    clientId,
+    organizationId: "demo-org",
+    tone: "professional-local-expert",
+    objectives: [
+      "Increase local visibility",
+      "Improve review response velocity",
+      "Publish location-aware GBP content consistently"
+    ],
+    photoAssetUrls: [],
+    photoAssetIds: [],
+    sitemapUrl: null,
+    defaultPostUrl: null,
+    reviewReplyStyle: "balanced",
+    postFrequencyPerWeek: 3,
+    postWordCountMin: 500,
+    postWordCountMax: 800,
+    eeatStructuredSnippetEnabled: true,
+    metadata: {},
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
 export class InMemoryBlitzRepository implements BlitzRunRepository {
   private readonly state: InMemoryState;
 
@@ -56,11 +87,18 @@ export class InMemoryBlitzRepository implements BlitzRunRepository {
     runs?: BlitzRun[];
     policies?: BlitzAutopilotPolicy[];
     integrations?: IntegrationConnectionRecord[];
+    orchestrationSettings?: ClientOrchestrationSettingsRecord[];
+    mediaAssets?: ClientMediaAssetRecord[];
   }) {
     this.state = {
       runs: new Map((seed?.runs ?? []).map((run) => [run.id, run])),
       actions: new Map(),
       policies: new Map((seed?.policies ?? []).map((policy) => [policy.clientId, policy])),
+      orchestrationSettings: new Map(
+        (seed?.orchestrationSettings ?? []).map((settings) => [settings.clientId, settings])
+      ),
+      mediaAssets: new Map((seed?.mediaAssets ?? []).map((asset) => [asset.id, asset])),
+      reviewReplies: new Map(),
       logs: [],
       rollbacks: [],
       integrations: new Map((seed?.integrations ?? []).map((connection) => [connection.id, connection]))
@@ -204,6 +242,32 @@ export class InMemoryBlitzRepository implements BlitzRunRepository {
       updatedAt: nowIso()
     };
     this.state.integrations.set(connectionId, updated);
+  }
+
+  async getClientOrchestrationSettings(clientId: string): Promise<ClientOrchestrationSettingsRecord> {
+    const existing = this.state.orchestrationSettings.get(clientId);
+    if (existing) {
+      return existing;
+    }
+
+    const seeded = defaultOrchestrationSettings(clientId);
+    this.state.orchestrationSettings.set(clientId, seeded);
+    return seeded;
+  }
+
+  async listClientMediaAssets(clientId: string): Promise<ClientMediaAssetRecord[]> {
+    return [...this.state.mediaAssets.values()].filter((asset) => asset.clientId === clientId);
+  }
+
+  async hasPostedReplyHistory(clientId: string, reviewId: string): Promise<boolean> {
+    const key = `${clientId}:${reviewId}`;
+    const existing = this.state.reviewReplies.get(key);
+    return existing?.replyStatus === "posted";
+  }
+
+  async recordReviewReplyHistory(input: ReviewReplyHistoryRecord): Promise<void> {
+    const key = `${input.clientId}:${input.reviewId}`;
+    this.state.reviewReplies.set(key, input);
   }
 
   seedRun(run: BlitzRun): void {

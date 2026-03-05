@@ -10,6 +10,14 @@ const DEFAULT_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.profile"
 ];
 
+function requireRedirectUri(config: GbpApiConfig, operation: string): string {
+  const redirectUri = config.redirectUri?.trim();
+  if (!redirectUri) {
+    throw new Error(`Google OAuth redirect URI is required for ${operation}`);
+  }
+  return redirectUri;
+}
+
 export function encodeOAuthState(state: GbpOAuthState): string {
   return Buffer.from(JSON.stringify(state), "utf8").toString("base64url");
 }
@@ -19,18 +27,20 @@ export function decodeOAuthState(value: string): GbpOAuthState {
 }
 
 export function buildGbpOAuthUrl(config: GbpApiConfig, state: GbpOAuthState): string {
+  const redirectUri = requireRedirectUri(config, "authorization URL generation");
   const url = new URL(GOOGLE_OAUTH_BASE);
   url.searchParams.set("client_id", config.clientId);
-  url.searchParams.set("redirect_uri", config.redirectUri);
+  url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", DEFAULT_SCOPES.join(" "));
   url.searchParams.set("state", encodeOAuthState(state));
   url.searchParams.set("access_type", "offline");
-  url.searchParams.set("prompt", "consent");
+  url.searchParams.set("prompt", "consent select_account");
   return url.toString();
 }
 
 export async function exchangeCodeForToken(config: GbpApiConfig, code: string): Promise<GbpTokenSet> {
+  const redirectUri = requireRedirectUri(config, "authorization code exchange");
   const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
     method: "POST",
     headers: {
@@ -40,7 +50,7 @@ export async function exchangeCodeForToken(config: GbpApiConfig, code: string): 
       code,
       client_id: config.clientId,
       client_secret: config.clientSecret,
-      redirect_uri: config.redirectUri,
+      redirect_uri: redirectUri,
       grant_type: "authorization_code"
     })
   });

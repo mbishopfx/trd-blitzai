@@ -34,11 +34,13 @@ export default function ClientsPage() {
   const [seedQueryState, setSeedQueryState] = useState<{
     oauthConnected: boolean;
     seededClients: string | null;
+    refreshedClients: string | null;
     seededSkipped: string | null;
     seedError: string | null;
   }>({
     oauthConnected: false,
     seededClients: null,
+    refreshedClients: null,
     seededSkipped: null,
     seedError: null
   });
@@ -52,6 +54,7 @@ export default function ClientsPage() {
     setSeedQueryState({
       oauthConnected: params.get("gbp_connected") === "true",
       seededClients: params.get("seeded_clients"),
+      refreshedClients: params.get("refreshed_clients"),
       seededSkipped: params.get("seeded_skipped"),
       seedError: params.get("gbp_seed_error")
     });
@@ -64,7 +67,7 @@ export default function ClientsPage() {
     if (seedQueryState.seedError) {
       return `OAuth connected, but seeding returned an error: ${seedQueryState.seedError}`;
     }
-    return `OAuth connected. Seeded ${seedQueryState.seededClients ?? "0"} clients, skipped ${seedQueryState.seededSkipped ?? "0"}.`;
+    return `OAuth connected. Seeded ${seedQueryState.seededClients ?? "0"} new clients, refreshed ${seedQueryState.refreshedClients ?? "0"} existing clients, skipped ${seedQueryState.seededSkipped ?? "0"}.`;
   }, [seedQueryState]);
 
   const loadClients = () => {
@@ -99,27 +102,35 @@ export default function ClientsPage() {
     setError(null);
 
     try {
-      let seedClientId = clients[0]?.id ?? "";
-      if (!seedClientId) {
-        const created = await request<{ client: ClientRecord }>(`/api/v1/orgs/${selectedOrgId}/clients`, {
-          method: "POST",
-          body: {
-            name: "GBP Seed Connector",
-            timezone: "America/Chicago",
-            websiteUrl: "https://truerankdigital.com",
-            primaryLocationLabel: "Seed Connector"
-          }
-        });
-        seedClientId = created.client.id;
-      }
-
       const oauthStart = await request<OAuthStartResponse>(
-        `/api/v1/gbp/oauth/start?clientId=${encodeURIComponent(seedClientId)}&returnPath=${encodeURIComponent("/dashboard/clients")}`
+        `/api/v1/gbp/oauth/start?seedMode=true&returnPath=${encodeURIComponent("/dashboard/clients")}`
       );
 
       window.location.assign(oauthStart.authUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  };
+
+  const deleteClient = async (client: ClientRecord) => {
+    const confirmed = window.confirm(
+      `Delete ${client.name} from Blitz platform? This only removes it from TRD Blitz and does not remove it from Google Business Profile.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await request(`/api/v1/clients/${client.id}`, {
+        method: "DELETE"
+      });
+      loadClients();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
       setBusy(false);
     }
   };
@@ -163,6 +174,7 @@ export default function ClientsPage() {
                 <th>Website</th>
                 <th>Created</th>
                 <th>Workspace</th>
+                <th>Platform Control</th>
               </tr>
             </thead>
             <tbody>
@@ -190,11 +202,16 @@ export default function ClientsPage() {
                       Open
                     </Link>
                   </td>
+                  <td>
+                    <button type="button" className={styles.buttonDanger} disabled={busy} onClick={() => void deleteClient(client)}>
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               ))}
               {!loading && clients.length === 0 ? (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <p className={styles.empty}>No clients found. Run "Connect Google + Seed Clients" to import your GBP locations.</p>
                   </td>
                 </tr>

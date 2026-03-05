@@ -16,10 +16,11 @@ export async function GET(request: NextRequest) {
   }
 
   const clientId = request.nextUrl.searchParams.get("clientId");
+  const seedMode = request.nextUrl.searchParams.get("seedMode") === "true";
   const returnPath = request.nextUrl.searchParams.get("returnPath") ?? "/dashboard/clients";
 
-  if (!clientId) {
-    return fail("clientId query param is required", 400);
+  if (!clientId && !seedMode) {
+    return fail("clientId query param is required unless seedMode=true", 400);
   }
 
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
     },
     {
       organizationId: ctx.organizationId,
-      clientId,
+      clientId: clientId ?? "__seed_connector__",
       userId: ctx.userId,
       returnPath
     }

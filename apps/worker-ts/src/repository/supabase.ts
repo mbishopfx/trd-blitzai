@@ -10,8 +10,11 @@ import type {
 import type {
   ActionLogRecord,
   BlitzRunRepository,
+  ClientMediaAssetRecord,
+  ClientOrchestrationSettingsRecord,
   IntegrationConnectionPatch,
   IntegrationConnectionRecord,
+  ReviewReplyHistoryRecord,
   RollbackRecord
 } from "../types";
 
@@ -106,6 +109,49 @@ function mapIntegrationConnectionRow(row: Record<string, unknown>): IntegrationC
     connectedAt: String(row.connected_at ?? row.created_at ?? nowIso()),
     lastRefreshAt: toIsoOrNull(row.last_refresh_at),
     isActive: row.is_active !== false,
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? nowIso())
+  };
+}
+
+function mapClientOrchestrationSettingsRow(row: Record<string, unknown>): ClientOrchestrationSettingsRecord {
+  const frequencyRaw = row.post_frequency_per_week;
+  const wordMinRaw = row.post_word_count_min;
+  const wordMaxRaw = row.post_word_count_max;
+  return {
+    clientId: String(row.client_id),
+    organizationId: String(row.organization_id),
+    tone: typeof row.tone === "string" ? row.tone : "professional-local-expert",
+    objectives: Array.isArray(row.objectives) ? row.objectives.map(String) : [],
+    photoAssetUrls: Array.isArray(row.photo_asset_urls) ? row.photo_asset_urls.map(String) : [],
+    photoAssetIds: Array.isArray(row.photo_asset_ids) ? row.photo_asset_ids.map(String) : [],
+    sitemapUrl: typeof row.sitemap_url === "string" ? row.sitemap_url : null,
+    defaultPostUrl: typeof row.default_post_url === "string" ? row.default_post_url : null,
+    reviewReplyStyle: typeof row.review_reply_style === "string" ? row.review_reply_style : "balanced",
+    postFrequencyPerWeek:
+      frequencyRaw === undefined || frequencyRaw === null ? 3 : numberValue(frequencyRaw),
+    postWordCountMin: wordMinRaw === undefined || wordMinRaw === null ? 500 : numberValue(wordMinRaw),
+    postWordCountMax: wordMaxRaw === undefined || wordMaxRaw === null ? 800 : numberValue(wordMaxRaw),
+    eeatStructuredSnippetEnabled: row.eeat_structured_snippet_enabled !== false,
+    metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? nowIso())
+  };
+}
+
+function mapClientMediaAssetRow(row: Record<string, unknown>): ClientMediaAssetRecord {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    clientId: String(row.client_id),
+    storageBucket: String(row.storage_bucket),
+    storagePath: String(row.storage_path),
+    fileName: String(row.file_name),
+    mimeType: typeof row.mime_type === "string" ? row.mime_type : null,
+    bytes: row.bytes === null || row.bytes === undefined ? null : numberValue(row.bytes),
+    isAllowedForPosts: row.is_allowed_for_posts !== false,
+    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    metadata: (row.metadata as Record<string, unknown> | null) ?? {},
     createdAt: String(row.created_at ?? nowIso()),
     updatedAt: String(row.updated_at ?? nowIso())
   };
@@ -425,6 +471,138 @@ export class SupabaseBlitzRepository implements BlitzRunRepository {
     const { error } = await this.supabase.from("integration_connections").update(updatePatch).eq("id", connectionId);
     if (error) {
       throw new Error(`Failed to update integration connection ${connectionId}: ${error.message}`);
+    }
+  }
+
+  async getClientOrchestrationSettings(clientId: string): Promise<ClientOrchestrationSettingsRecord> {
+    const { data: row, error } = await this.supabase
+      .from("client_orchestration_settings")
+      .select(
+        "client_id,organization_id,tone,objectives,photo_asset_urls,photo_asset_ids,sitemap_url,default_post_url,review_reply_style,post_frequency_per_week,post_word_count_min,post_word_count_max,eeat_structured_snippet_enabled,metadata,created_at,updated_at"
+      )
+      .eq("client_id", clientId)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`Failed to load orchestration settings for client ${clientId}: ${error.message}`);
+    }
+
+    if (!row) {
+      const { data: clientRow, error: clientError } = await this.supabase
+        .from("clients")
+        .select("organization_id")
+        .eq("id", clientId)
+        .maybeSingle();
+      if (clientError || !clientRow) {
+        throw new Error(
+          `Failed to resolve client organization for orchestration settings ${clientId}: ${clientError?.message ?? "client not found"}`
+        );
+      }
+
+      const { data: seededRow, error: seedError } = await this.supabase
+        .from("client_orchestration_settings")
+        .insert({
+          organization_id: String(clientRow.organization_id),
+          client_id: clientId,
+          tone: "professional-local-expert",
+          objectives: [
+            "Increase local visibility",
+            "Improve review response velocity",
+            "Publish location-aware GBP content consistently"
+          ],
+          photo_asset_urls: [],
+          photo_asset_ids: [],
+          sitemap_url: null,
+          default_post_url: null,
+          review_reply_style: "balanced",
+          post_frequency_per_week: 3,
+          post_word_count_min: 500,
+          post_word_count_max: 800,
+          eeat_structured_snippet_enabled: true,
+          metadata: {}
+        })
+        .select(
+          "client_id,organization_id,tone,objectives,photo_asset_urls,photo_asset_ids,sitemap_url,default_post_url,review_reply_style,post_frequency_per_week,post_word_count_min,post_word_count_max,eeat_structured_snippet_enabled,metadata,created_at,updated_at"
+        )
+        .single();
+      if (seedError || !seededRow) {
+        throw new Error(`Failed to seed orchestration settings for client ${clientId}: ${seedError?.message ?? "unknown error"}`);
+      }
+
+      return mapClientOrchestrationSettingsRow(seededRow as Record<string, unknown>);
+    }
+
+    return mapClientOrchestrationSettingsRow(row as Record<string, unknown>);
+  }
+
+  async listClientMediaAssets(clientId: string): Promise<ClientMediaAssetRecord[]> {
+    const { data: rows, error } = await this.supabase
+      .from("client_media_assets")
+      .select(
+        "id,organization_id,client_id,storage_bucket,storage_path,file_name,mime_type,bytes,is_allowed_for_posts,tags,metadata,created_at,updated_at"
+      )
+      .eq("client_id", clientId)
+      .eq("is_allowed_for_posts", true)
+      .order("created_at", { ascending: false });
+    if (error) {
+      throw new Error(`Failed to load client media assets for ${clientId}: ${error.message}`);
+    }
+
+    const mapped = (rows ?? []).map((row) => mapClientMediaAssetRow(row as Record<string, unknown>));
+    const withSignedUrls = await Promise.all(
+      mapped.map(async (asset) => {
+        const { data } = await this.supabase.storage
+          .from(asset.storageBucket)
+          .createSignedUrl(asset.storagePath, 60 * 60 * 24 * 30);
+        return {
+          ...asset,
+          metadata: {
+            ...asset.metadata,
+            signedUrl: data?.signedUrl ?? null
+          }
+        };
+      })
+    );
+    return withSignedUrls;
+  }
+
+  async hasPostedReplyHistory(clientId: string, reviewId: string): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from("review_reply_history")
+      .select("id")
+      .eq("client_id", clientId)
+      .eq("review_id", reviewId)
+      .eq("reply_status", "posted")
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`Failed to query review reply history for ${reviewId}: ${error.message}`);
+    }
+
+    return Boolean(data);
+  }
+
+  async recordReviewReplyHistory(input: ReviewReplyHistoryRecord): Promise<void> {
+    const { error } = await this.supabase.from("review_reply_history").upsert(
+      {
+        organization_id: input.organizationId,
+        client_id: input.clientId,
+        location_id: input.locationId,
+        review_id: input.reviewId,
+        review_rating: input.reviewRating,
+        review_text: input.reviewText,
+        reply_text: input.replyText,
+        reply_status: input.replyStatus,
+        replied_at: input.replyStatus === "posted" ? nowIso() : null,
+        error: input.error ?? null,
+        source_payload: {
+          source: "blitz_worker_live",
+          updatedAt: nowIso()
+        }
+      },
+      { onConflict: "client_id,review_id" }
+    );
+    if (error) {
+      throw new Error(`Failed to write review reply history for ${input.reviewId}: ${error.message}`);
     }
   }
 

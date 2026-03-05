@@ -13,6 +13,7 @@
     "dev:web": "npm --workspace apps/web run dev",
     "dev:worker": "npm --workspace apps/worker-ts run dev",
     "seed:gbp-clients": "tsx scripts/seed-gbp-clients.ts",
+    "smoke:live-worker": "tsx scripts/live-worker-smoke.ts",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
