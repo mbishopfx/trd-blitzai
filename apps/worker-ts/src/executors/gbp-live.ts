@@ -1,6 +1,9 @@
 import type { BlitzAction, BlitzRun } from "@trd-aiblitz/domain";
 import { GbpApiClient, refreshAccessToken } from "@trd-aiblitz/integrations-gbp";
+import QRCode from "qrcode";
+import sharp from "sharp";
 import { decryptJsonToken, encryptJsonToken } from "../crypto";
+import { getSupabaseServiceClient, isSupabaseConfigured } from "../supabase";
 import type {
   ActionExecutionResult,
   ActionExecutor,
@@ -33,6 +36,20 @@ interface RunContext {
   warnings: string[];
   settings: ClientOrchestrationSettingsRecord;
   mediaAssets: ClientMediaAssetRecord[];
+}
+
+interface LandingPageContext {
+  pageTitle: string | null;
+  metaDescription: string | null;
+  h1: string | null;
+  firstParagraph: string | null;
+}
+
+interface TinyUrlResult {
+  tinyUrl: string;
+  originalUrl: string;
+  success: boolean;
+  error?: string;
 }
 
 interface ExecutorOptions {
@@ -150,6 +167,114 @@ function readableObjective(objective: string): string {
     .trim();
 }
 
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
+}
+
+function extractSitemapLocEntries(xml: string): string[] {
+  const matches = [...xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)];
+  return matches
+    .map((match) => decodeXmlEntities(match[1] ?? "").trim())
+    .filter((entry) => entry.startsWith("http://") || entry.startsWith("https://"));
+}
+
+function likelyNestedSitemap(url: string): boolean {
+  const normalized = url.toLowerCase();
+  return normalized.endsWith(".xml") || normalized.includes("sitemap");
+}
+
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function stripHtmlTags(value: string): string {
+  return normalizeText(
+    value
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+  );
+}
+
+function extractHtmlTagContent(html: string, tagName: string): string | null {
+  const match = html.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i"));
+  if (!match?.[1]) {
+    return null;
+  }
+  return stripHtmlTags(match[1]).slice(0, 220) || null;
+}
+
+function extractMetaDescription(html: string): string | null {
+  const match =
+    html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["'][^>]*>/i) ??
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["'][^>]*>/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  return normalizeText(decodeXmlEntities(match[1])).slice(0, 260) || null;
+}
+
+function toSentenceCase(value: string): string {
+  if (!value) {
+    return value;
+  }
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function summarizeUrlPath(urlString: string): string {
+  try {
+    const url = new URL(urlString);
+    const path = url.pathname.replace(/^\/+|\/+$/g, "");
+    if (!path) {
+      return "homepage offers";
+    }
+    const tokens = path
+      .split("/")
+      .flatMap((segment) => segment.split("-"))
+      .map((token) => token.trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    if (!tokens.length) {
+      return "service content";
+    }
+    return `${tokens.join(" ")} information`;
+  } catch {
+    return "service information";
+  }
+}
+
+function sanitizeStorageSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+
+function normalizeHttpUrl(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const normalized = new URL(value.trim());
+    if (normalized.protocol !== "http:" && normalized.protocol !== "https:") {
+      return null;
+    }
+    return normalized.toString();
+  } catch {
+    return null;
+  }
+}
+
+function hashStringToNumber(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
 function mediaUrlFromAsset(asset: ClientMediaAssetRecord): string | null {
   const metadata = asRecord(asset.metadata);
   const candidates = [
@@ -167,6 +292,9 @@ function buildEeatLongFormPost(input: {
   ordinal: number;
   tone: string;
   wordRange: { min: number; max: number };
+  landingUrl: string;
+  shortUrl: string;
+  pageContext: LandingPageContext;
   ctaUrl?: string | null;
 }): { longForm: string; snippet: string } {
   const targetMin = clamp(input.wordRange.min, 120, 2000);
@@ -174,17 +302,26 @@ function buildEeatLongFormPost(input: {
   const targetWords = clamp(Math.round((targetMin + targetMax) / 2), targetMin, targetMax);
   const objectiveLabel = readableObjective(input.objective);
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const topicLabel =
+    input.pageContext.h1 ??
+    input.pageContext.pageTitle ??
+    toSentenceCase(summarizeUrlPath(input.landingUrl));
+  const metaBlurb =
+    input.pageContext.metaDescription ??
+    input.pageContext.firstParagraph ??
+    `${input.locationTitle} updated this page to answer high-intent local buyer questions with clearer scope, proof, and CTA guidance.`;
+  const ctaTarget = input.ctaUrl ?? input.shortUrl;
 
   const requiredSections = [
     `# Local Service Brief (${today})`,
     "## Experience",
-    `${input.locationTitle} completed this week's ${objectiveLabel} cycle and documented the exact service flow customers asked about most. This update uses a ${input.tone} tone so local buyers can quickly evaluate fit, timelines, and practical outcomes before contacting the team.`,
+    `${input.locationTitle} completed this week's ${objectiveLabel} cycle and aligned this GBP post to the live page topic: "${topicLabel}". This update uses a ${input.tone} tone so local buyers can quickly evaluate fit, timelines, and practical outcomes before contacting the team.`,
     "## Expertise",
-    `The team standardized delivery checkpoints for discovery, planning, execution, and handoff. Each checkpoint includes operating detail, expected turnaround, quality controls, and escalation rules so service quality stays consistent even as request volume changes.`,
+    `The team standardized delivery checkpoints for discovery, planning, execution, and handoff. Each checkpoint includes operating detail, expected turnaround, quality controls, and escalation rules so service quality stays consistent even as request volume changes. Core page focus: ${metaBlurb}`,
     "## Authoritativeness",
     `This location benchmarked active local competitors, category intent, and profile visibility factors. Published facts focus on verifiable service details, clear scope boundaries, and location relevance so search systems can classify the business accurately for high-intent queries.`,
     "## Trust",
-    `Claims in this post are tied to real operations, documented customer interactions, and current availability. Messaging avoids inflated promises and keeps language specific enough for users to validate through direct contact, review history, and current profile metadata.`,
+    `Claims in this post are tied to real operations, documented customer interactions, and current availability. Messaging avoids inflated promises and keeps language specific enough for users to validate through direct contact, review history, and current profile metadata. Traffic path tracked via ${ctaTarget}.`,
     "## Structured Snippet",
     "- Service Availability: verified for current schedule windows\n- Location Relevance: aligned with local intent clusters\n- Operational Proof: process checkpoints and response SLAs documented\n- Reputation Signals: review response workflow active with escalation guardrails",
     "## Action Summary",
@@ -221,7 +358,7 @@ function buildEeatLongFormPost(input: {
   }
 
   const summaryHeader = `${input.locationTitle} local update:`;
-  const snippetRaw = `${summaryHeader} Experience, expertise, authority, and trust signals were refreshed with structured service facts, operational detail, and customer-intent guidance from the latest ${objectiveLabel} cycle. ${input.ctaUrl ? `More details: ${input.ctaUrl}` : ""}`.trim();
+  const snippetRaw = `${summaryHeader} ${topicLabel} was refreshed with EEAT-aligned service proof, local buyer guidance, and direct conversion intent. ${metaBlurb} Learn more: ${ctaTarget}`.trim();
   const snippet = snippetRaw.slice(0, 1450);
 
   return {
@@ -553,6 +690,375 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     };
   }
 
+  private async fetchTextWithTimeout(url: string, timeoutMs = 15000): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: "text/html,application/xml;q=0.9,text/xml;q=0.9,*/*;q=0.5"
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+      return await response.text();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async fetchBufferWithTimeout(url: string, timeoutMs = 15000): Promise<Buffer> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+      return Buffer.from(await response.arrayBuffer());
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async loadSitemapUrls(sitemapUrl: string | null): Promise<string[]> {
+    const normalizedSitemapUrl = normalizeHttpUrl(sitemapUrl);
+    if (!normalizedSitemapUrl) {
+      return [];
+    }
+
+    const visited = new Set<string>();
+    const primaryHost = new URL(normalizedSitemapUrl).host;
+
+    const walk = async (url: string, depth: number): Promise<string[]> => {
+      if (depth > 2 || visited.has(url)) {
+        return [];
+      }
+      visited.add(url);
+
+      let xml: string;
+      try {
+        xml = await this.fetchTextWithTimeout(url, 15000);
+      } catch {
+        return [];
+      }
+
+      const entries = extractSitemapLocEntries(xml);
+      if (!entries.length) {
+        return [];
+      }
+
+      const nested = entries.filter(likelyNestedSitemap).slice(0, 12);
+      const pages = entries.filter((entry) => !likelyNestedSitemap(entry));
+      if (!nested.length || depth >= 2) {
+        return pages;
+      }
+
+      const nestedPages = (
+        await Promise.all(nested.map(async (nestedUrl) => walk(nestedUrl, depth + 1)))
+      ).flat();
+
+      return [...pages, ...nestedPages];
+    };
+
+    const rawUrls = await walk(normalizedSitemapUrl, 0);
+    const filtered = [...new Set(rawUrls)]
+      .map((entry) => normalizeHttpUrl(entry))
+      .filter((entry): entry is string => Boolean(entry))
+      .filter((entry) => {
+        try {
+          const parsed = new URL(entry);
+          if (parsed.host !== primaryHost) {
+            return false;
+          }
+          const lowerPath = `${parsed.pathname}${parsed.search}`.toLowerCase();
+          if (
+            lowerPath.includes("/tag/") ||
+            lowerPath.includes("/author/") ||
+            lowerPath.includes("/feed") ||
+            lowerPath.includes("/wp-json") ||
+            lowerPath.includes("/category/")
+          ) {
+            return false;
+          }
+          return true;
+        } catch {
+          return false;
+        }
+      });
+
+    return filtered;
+  }
+
+  private selectLandingUrl(input: {
+    action: BlitzAction;
+    context: RunContext;
+    location: ResolvedLocation;
+    index: number;
+    sitemapUrls: string[];
+  }): { landingUrl: string; source: "payload" | "sitemap" | "default" } {
+    const payloadLandingUrl = normalizeHttpUrl(
+      typeof input.action.payload.landingUrl === "string" ? input.action.payload.landingUrl : null
+    );
+    if (payloadLandingUrl) {
+      return {
+        landingUrl: payloadLandingUrl,
+        source: "payload"
+      };
+    }
+
+    if (input.sitemapUrls.length > 0) {
+      const seed = hashStringToNumber(`${input.action.id}:${input.location.locationId}:${input.index}`);
+      const selected = input.sitemapUrls[seed % input.sitemapUrls.length];
+      return {
+        landingUrl: selected,
+        source: "sitemap"
+      };
+    }
+
+    const fallback =
+      normalizeHttpUrl(input.context.settings.defaultPostUrl) ??
+      normalizeHttpUrl(input.location.websiteUri);
+    if (!fallback) {
+      throw new Error("No valid landing URL found. Configure sitemapUrl or defaultPostUrl for this client.");
+    }
+    return {
+      landingUrl: fallback,
+      source: "default"
+    };
+  }
+
+  private async fetchLandingPageContext(url: string): Promise<LandingPageContext> {
+    try {
+      const html = await this.fetchTextWithTimeout(url, 12000);
+      const paragraphMatch = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+      return {
+        pageTitle: extractHtmlTagContent(html, "title"),
+        metaDescription: extractMetaDescription(html),
+        h1: extractHtmlTagContent(html, "h1"),
+        firstParagraph: paragraphMatch?.[1] ? stripHtmlTags(paragraphMatch[1]).slice(0, 320) : null
+      };
+    } catch {
+      return {
+        pageTitle: null,
+        metaDescription: null,
+        h1: null,
+        firstParagraph: null
+      };
+    }
+  }
+
+  private async createTinyUrl(url: string): Promise<TinyUrlResult> {
+    const normalized = normalizeHttpUrl(url);
+    if (!normalized) {
+      return {
+        tinyUrl: url,
+        originalUrl: url,
+        success: false,
+        error: "Invalid URL for TinyURL"
+      };
+    }
+
+    const apiKey = process.env.TINYURL_API_KEY?.trim();
+    if (!apiKey) {
+      return {
+        tinyUrl: normalized,
+        originalUrl: normalized,
+        success: false,
+        error: "TINYURL_API_KEY not configured"
+      };
+    }
+
+    try {
+      const response = await fetch("https://api.tinyurl.com/create", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          url: normalized
+        })
+      });
+
+      if (!response.ok) {
+        return {
+          tinyUrl: normalized,
+          originalUrl: normalized,
+          success: false,
+          error: `TinyURL API returned ${response.status}`
+        };
+      }
+
+      const payload = (await response.json()) as { data?: { tiny_url?: string } };
+      const tinyUrl = normalizeHttpUrl(payload.data?.tiny_url ?? null);
+      if (!tinyUrl) {
+        return {
+          tinyUrl: normalized,
+          originalUrl: normalized,
+          success: false,
+          error: "TinyURL response missing tiny_url"
+        };
+      }
+
+      return {
+        tinyUrl,
+        originalUrl: normalized,
+        success: true
+      };
+    } catch (error) {
+      return {
+        tinyUrl: normalized,
+        originalUrl: normalized,
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  private async resolveDirectAssetMediaUrl(asset: ClientMediaAssetRecord): Promise<string | null> {
+    const existing = normalizeHttpUrl(mediaUrlFromAsset(asset));
+    if (existing) {
+      return existing;
+    }
+
+    if (!isSupabaseConfigured()) {
+      return null;
+    }
+
+    const supabase = getSupabaseServiceClient();
+    const { data, error } = await supabase.storage.from(asset.storageBucket).createSignedUrl(asset.storagePath, 60 * 60 * 24 * 7);
+    if (error || !data?.signedUrl) {
+      return null;
+    }
+    return normalizeHttpUrl(data.signedUrl);
+  }
+
+  private async downloadAssetBuffer(asset: ClientMediaAssetRecord): Promise<Buffer> {
+    if (isSupabaseConfigured()) {
+      const supabase = getSupabaseServiceClient();
+      const { data, error } = await supabase.storage.from(asset.storageBucket).download(asset.storagePath);
+      if (!error && data) {
+        return Buffer.from(await data.arrayBuffer());
+      }
+    }
+
+    const directUrl = await this.resolveDirectAssetMediaUrl(asset);
+    if (!directUrl) {
+      throw new Error(`Unable to resolve downloadable URL for media asset ${asset.id}`);
+    }
+    return this.fetchBufferWithTimeout(directUrl, 15000);
+  }
+
+  private async generateQrOverlayMedia(input: {
+    asset: ClientMediaAssetRecord;
+    clientId: string;
+    actionId: string;
+    qrUrl: string;
+  }): Promise<{ mediaUrl: string | null; processedStoragePath: string | null; error: string | null }> {
+    const fallbackMediaUrl = await this.resolveDirectAssetMediaUrl(input.asset);
+    if (!isSupabaseConfigured()) {
+      return {
+        mediaUrl: fallbackMediaUrl,
+        processedStoragePath: null,
+        error: "Supabase is not configured for QR media generation"
+      };
+    }
+
+    const supabase = getSupabaseServiceClient();
+
+    try {
+      const sourceBuffer = await this.downloadAssetBuffer(input.asset);
+      const image = sharp(sourceBuffer, { failOn: "none" });
+      const metadata = await image.metadata();
+      const width = metadata.width ?? 0;
+      const height = metadata.height ?? 0;
+      if (width < 100 || height < 100) {
+        throw new Error("Source image dimensions are too small for QR overlay");
+      }
+
+      const qrSize = Math.floor(clamp(Math.min(width, height) * 0.16, 100, 420));
+      const padding = Math.floor(clamp(Math.min(width, height) * 0.025, 10, 40));
+      const qrBuffer = await QRCode.toBuffer(input.qrUrl, {
+        width: qrSize,
+        margin: 1,
+        color: {
+          dark: "#000000",
+          light: "#FFFFFF"
+        }
+      });
+
+      const backgroundSize = qrSize + padding * 2;
+      const qrWithBackground = await sharp({
+        create: {
+          width: backgroundSize,
+          height: backgroundSize,
+          channels: 4,
+          background: { r: 255, g: 255, b: 255, alpha: 0.9 }
+        }
+      })
+        .composite([
+          {
+            input: qrBuffer,
+            left: padding,
+            top: padding
+          }
+        ])
+        .png()
+        .toBuffer();
+
+      const left = Math.max(0, width - backgroundSize - padding);
+      const top = Math.max(0, height - backgroundSize - padding);
+
+      const outputBuffer = await image
+        .png()
+        .composite([
+          {
+            input: qrWithBackground,
+            left,
+            top
+          }
+        ])
+        .png()
+        .toBuffer();
+
+      const dateFolder = new Date().toISOString().slice(0, 10);
+      const outputPath = `processed/${dateFolder}/${sanitizeStorageSegment(input.clientId)}-${sanitizeStorageSegment(input.actionId)}-${sanitizeStorageSegment(input.asset.id)}-${Date.now()}.png`;
+
+      const { error: uploadError } = await supabase.storage.from(input.asset.storageBucket).upload(outputPath, outputBuffer, {
+        contentType: "image/png",
+        cacheControl: "3600",
+        upsert: false
+      });
+      if (uploadError) {
+        throw new Error(uploadError.message);
+      }
+
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from(input.asset.storageBucket)
+        .createSignedUrl(outputPath, 60 * 60 * 24 * 7);
+      if (signedError || !signedData?.signedUrl) {
+        throw new Error(signedError?.message ?? "Unable to create signed URL for processed image");
+      }
+
+      return {
+        mediaUrl: normalizeHttpUrl(signedData.signedUrl),
+        processedStoragePath: outputPath,
+        error: null
+      };
+    } catch (error) {
+      return {
+        mediaUrl: fallbackMediaUrl,
+        processedStoragePath: null,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
   private async executeProfilePatch(input: {
     action: BlitzAction;
     context: RunContext;
@@ -694,7 +1200,12 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         toNumber(input.action.payload.postCount, postCountFromSettings)
       )
     );
-    const ctaUrlFromPayload = typeof input.action.payload.ctaUrl === "string" ? input.action.payload.ctaUrl : undefined;
+    const ctaUrlFromPayload = normalizeHttpUrl(
+      typeof input.action.payload.ctaUrl === "string" ? input.action.payload.ctaUrl : null
+    );
+    const mediaUrlFromPayload = normalizeHttpUrl(
+      typeof input.action.payload.mediaUrl === "string" ? input.action.payload.mediaUrl : null
+    );
     const selectedAssetIds = new Set(input.context.settings.photoAssetIds);
     const allowedAssets = input.context.mediaAssets.filter((asset) => {
       if (!asset.isAllowedForPosts) {
@@ -705,19 +1216,53 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
       return true;
     });
+    if (!mediaUrlFromPayload && allowedAssets.length === 0) {
+      throw new Error(
+        "No approved client media assets are available for GBP posting. Upload assets in client settings and mark them allowed."
+      );
+    }
     const publishedPosts: Array<Record<string, unknown>> = [];
     const failed: Array<Record<string, unknown>> = [];
     const generatedLongFormDrafts: Array<Record<string, unknown>> = [];
+    const executionWarnings: string[] = [];
+    const sitemapUrls = await this.loadSitemapUrls(input.context.settings.sitemapUrl);
+    if (normalizeHttpUrl(input.context.settings.sitemapUrl) && sitemapUrls.length === 0) {
+      executionWarnings.push("Configured sitemap URL did not return usable page URLs; fallback URL strategy was used.");
+    }
 
     for (let index = 0; index < postCount; index += 1) {
       const location = input.context.locations[index % input.context.locations.length];
       const selectedAsset =
         allowedAssets.length > 0 ? allowedAssets[index % allowedAssets.length] : null;
-      const mediaUrl =
-        (typeof input.action.payload.mediaUrl === "string" && input.action.payload.mediaUrl) ||
-        (selectedAsset ? mediaUrlFromAsset(selectedAsset) : null) ||
-        undefined;
-      const ctaUrl = ctaUrlFromPayload ?? input.context.settings.defaultPostUrl ?? location.websiteUri ?? undefined;
+      const landing = this.selectLandingUrl({
+        action: input.action,
+        context: input.context,
+        location,
+        index,
+        sitemapUrls
+      });
+      const tinyUrlResult = await this.createTinyUrl(landing.landingUrl);
+      if (!tinyUrlResult.success && tinyUrlResult.error) {
+        executionWarnings.push(`TinyURL fallback for ${landing.landingUrl}: ${tinyUrlResult.error}`);
+      }
+
+      const ctaUrl = ctaUrlFromPayload ?? tinyUrlResult.tinyUrl;
+      const pageContext = await this.fetchLandingPageContext(landing.landingUrl);
+
+      let mediaUrl: string | undefined = mediaUrlFromPayload ?? undefined;
+      let processedStoragePath: string | null = null;
+      let mediaGenerationError: string | null = null;
+      if (!mediaUrl && selectedAsset) {
+        const mediaResult = await this.generateQrOverlayMedia({
+          asset: selectedAsset,
+          clientId: input.action.clientId ?? input.context.connection.clientId,
+          actionId: input.action.id,
+          qrUrl: landing.landingUrl
+        });
+        mediaUrl = mediaResult.mediaUrl ?? undefined;
+        processedStoragePath = mediaResult.processedStoragePath;
+        mediaGenerationError = mediaResult.error;
+      }
 
       const eeatDraft = buildEeatLongFormPost({
         locationTitle: location.title ?? "our business",
@@ -728,6 +1273,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           min: input.context.settings.postWordCountMin,
           max: input.context.settings.postWordCountMax
         },
+        landingUrl: landing.landingUrl,
+        shortUrl: tinyUrlResult.tinyUrl,
+        pageContext,
         ctaUrl
       });
       const summary = input.context.settings.eeatStructuredSnippetEnabled
@@ -750,7 +1298,13 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           locationName: location.locationName,
           locationId: location.locationId,
           mediaAssetId: selectedAsset?.id ?? null,
+          mediaProcessedStoragePath: processedStoragePath,
+          mediaGenerationError,
           ctaUrl,
+          sourceLandingUrl: landing.landingUrl,
+          tinyUrl: tinyUrlResult.tinyUrl,
+          urlSource: landing.source,
+          pageContext,
           wordCount: wordCount(eeatDraft.longForm),
           longForm: eeatDraft.longForm
         });
@@ -761,6 +1315,10 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           locationName: location.locationName,
           title: location.title,
           mediaAssetId: selectedAsset?.id ?? null,
+          mediaProcessedStoragePath: processedStoragePath,
+          sourceLandingUrl: landing.landingUrl,
+          tinyUrl: tinyUrlResult.tinyUrl,
+          urlSource: landing.source,
           ctaUrl
         });
       } catch (error) {
@@ -768,6 +1326,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           accountId: location.accountId,
           locationId: location.locationId,
           locationName: location.locationName,
+          sourceLandingUrl: landing.landingUrl,
+          tinyUrl: tinyUrlResult.tinyUrl,
           error: error instanceof Error ? error.message : String(error)
         });
       }
@@ -787,6 +1347,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         min: input.context.settings.postWordCountMin,
         max: input.context.settings.postWordCountMax
       },
+      sitemapUrl: input.context.settings.sitemapUrl,
+      sitemapUrlsDiscovered: sitemapUrls.length,
+      warnings: executionWarnings,
       publishedPosts,
       generatedLongFormDrafts,
       failedPublishes: failed

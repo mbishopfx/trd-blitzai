@@ -133,6 +133,7 @@ supabase db push
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI` (optional override; defaults to `${NEXT_PUBLIC_SITE_URL}/api/v1/gbp/oauth/callback`)
+- `TINYURL_API_KEY` (required for GBP post CTA shortlinks; falls back to original URL when unset)
 - `REDIS_URL` (required to enqueue run jobs)
 
 ### Railway (`apps/worker-ts`)
@@ -145,6 +146,7 @@ supabase db push
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - `GOOGLE_OAUTH_REDIRECT_URI` (optional override; fallback works without `NEXT_PUBLIC_SITE_URL`)
+- `TINYURL_API_KEY` (for sitemap URL shortening in post_publish worker actions)
 
 ### Railway (`services/worker-py`)
 

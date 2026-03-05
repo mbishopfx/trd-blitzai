@@ -16,10 +16,13 @@
     "@trd-aiblitz/domain": "file:../../packages/domain",
     "@trd-aiblitz/integrations-gbp": "file:../../packages/integrations-gbp",
     "bullmq": "^5.12.12",
-    "pino": "^9.5.0"
+    "pino": "^9.5.0",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/node": "^20.16.5",
+    "@types/qrcode": "^1.5.6",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.3"
