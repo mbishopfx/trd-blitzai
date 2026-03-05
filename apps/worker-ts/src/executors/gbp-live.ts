@@ -60,6 +60,53 @@ interface GeneratedPostCopy {
   warning?: string;
 }
 
+interface CompetitorRecord {
+  name: string;
+  formattedAddress: string | null;
+  rating: number | null;
+  userRatingCount: number | null;
+  primaryType: string | null;
+  types: string[];
+  websiteUri: string | null;
+  distanceMiles?: number | null;
+  relevanceScore?: number;
+  rankPosition?: number;
+}
+
+interface LocationSemanticSuggestions {
+  profileDescription: string | null;
+  qaPairs: Array<{ question: string; answer: string }>;
+  usps: string[];
+  suggestedCategories: string[];
+  suggestedServices: string[];
+  suggestedProducts: string[];
+  suggestedAttributes: string[];
+  hoursRecommendations: string[];
+  warning?: string;
+  model?: string | null;
+}
+
+interface GeoPoint {
+  lat: number;
+  lng: number;
+}
+
+interface LocationRichSnapshot {
+  locationName: string;
+  title: string | null;
+  websiteUri: string | null;
+  profileDescription: string | null;
+  categories: string[];
+  attributes: string[];
+  regularHours: Record<string, unknown> | null;
+  storefrontAddress: Record<string, unknown> | null;
+  formattedAddress: string | null;
+  geo: GeoPoint | null;
+  reviewCount: number;
+  averageRating: number;
+  postCount30d: number;
+}
+
 interface ExecutorOptions {
   maxPostBurst: number;
   maxReviewRepliesPerAction: number;
@@ -319,6 +366,94 @@ function parseJsonObjectFromText(value: string): Record<string, unknown> | null 
   }
 
   return null;
+}
+
+function normalizeBusinessName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function categoryLabel(value: unknown): string | null {
+  if (typeof value === "string") {
+    const normalized = normalizeText(value);
+    return normalized || null;
+  }
+  const record = asRecord(value);
+  const candidates = [
+    typeof record.displayName === "string" ? record.displayName : null,
+    typeof record.name === "string" ? record.name : null
+  ].filter((entry): entry is string => Boolean(entry));
+  return candidates[0] ? normalizeText(candidates[0]) : null;
+}
+
+function addressFromStorefront(storefront: Record<string, unknown> | null): string | null {
+  if (!storefront) {
+    return null;
+  }
+
+  const addressLines = Array.isArray(storefront.addressLines)
+    ? storefront.addressLines.map(String).map((line) => line.trim()).filter(Boolean)
+    : [];
+  if (addressLines.length) {
+    return addressLines.join(", ");
+  }
+
+  const parts = [
+    typeof storefront.locality === "string" ? storefront.locality : null,
+    typeof storefront.administrativeArea === "string" ? storefront.administrativeArea : null,
+    typeof storefront.postalCode === "string" ? storefront.postalCode : null
+  ].filter((entry): entry is string => Boolean(entry));
+  if (parts.length) {
+    return parts.join(", ");
+  }
+
+  return null;
+}
+
+function formatCityState(storefront: Record<string, unknown> | null): string | null {
+  if (!storefront) {
+    return null;
+  }
+  const locality = typeof storefront.locality === "string" ? storefront.locality.trim() : "";
+  const state = typeof storefront.administrativeArea === "string" ? storefront.administrativeArea.trim() : "";
+  if (locality && state) {
+    return `${locality}, ${state}`;
+  }
+  return locality || state || null;
+}
+
+function haversineMiles(a: GeoPoint, b: GeoPoint): number {
+  const toRad = (degrees: number) => (degrees * Math.PI) / 180;
+  const earthRadiusMiles = 3959;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const inner =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(inner), Math.sqrt(1 - inner));
+  return earthRadiusMiles * c;
+}
+
+function safeAverage(values: number[]): number {
+  if (!values.length) {
+    return 0;
+  }
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return total / values.length;
+}
+
+function normalizeRating(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.min(5, value));
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.min(5, parsed));
+    }
+  }
+  return 0;
 }
 
 function mediaUrlFromAsset(asset: ClientMediaAssetRecord): string | null {
@@ -1302,6 +1437,619 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
   }
 
+  private async requestJsonWithAuth<T>(input: {
+    url: string;
+    accessToken: string;
+    method?: "GET" | "POST" | "PATCH";
+    body?: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 15000);
+    try {
+      const response = await fetch(input.url, {
+        method: input.method ?? "GET",
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${input.accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: input.body ? JSON.stringify(input.body) : undefined
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`HTTP ${response.status} ${response.statusText} ${body.slice(0, 280)}`.trim());
+      }
+
+      return (await response.json()) as T;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private extractLocationCategories(location: Record<string, unknown>): string[] {
+    const rawCategories = Array.isArray(location.categories) ? location.categories : [];
+    const labels = rawCategories.map((entry) => categoryLabel(entry)).filter((entry): entry is string => Boolean(entry));
+    return [...new Set(labels)];
+  }
+
+  private extractLocationAttributes(location: Record<string, unknown>): string[] {
+    const rawAttributes = Array.isArray(location.attributes) ? location.attributes : [];
+    const labels = rawAttributes
+      .map((attribute) => {
+        const record = asRecord(attribute);
+        const displayName = typeof record.displayName === "string" ? record.displayName : null;
+        if (displayName) {
+          return normalizeText(displayName);
+        }
+        const name = typeof record.name === "string" ? record.name : null;
+        if (name) {
+          return normalizeText(name);
+        }
+        return null;
+      })
+      .filter((entry): entry is string => Boolean(entry));
+    return [...new Set(labels)];
+  }
+
+  private extractProfileDescription(location: Record<string, unknown>): string | null {
+    const profile = asRecord(location.profile);
+    const candidates = [
+      typeof profile.description === "string" ? profile.description : null,
+      typeof profile.summary === "string" ? profile.summary : null,
+      typeof location.description === "string" ? location.description : null
+    ].filter((entry): entry is string => Boolean(entry));
+    if (!candidates.length) {
+      return null;
+    }
+    return normalizeText(candidates[0]);
+  }
+
+  private extractLocationGeo(location: Record<string, unknown>): GeoPoint | null {
+    const latlng = asRecord(location.latlng);
+    const latitude = toNumber(latlng.latitude, Number.NaN);
+    const longitude = toNumber(latlng.longitude, Number.NaN);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      return { lat: latitude, lng: longitude };
+    }
+
+    const metadata = asRecord(location.metadata);
+    const lat = toNumber(metadata.lat, Number.NaN);
+    const lng = toNumber(metadata.lng, Number.NaN);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return { lat, lng };
+    }
+    return null;
+  }
+
+  private async fetchLocationWithExtendedMask(input: {
+    accessToken: string;
+    locationName: string;
+  }): Promise<Record<string, unknown>> {
+    const masks = [
+      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,categories,profile,attributes,serviceAreaBusiness",
+      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,categories,profile,serviceAreaBusiness",
+      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,profile",
+      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours"
+    ];
+
+    for (const mask of masks) {
+      const endpoint = new URL(`https://mybusinessbusinessinformation.googleapis.com/v1/${input.locationName}`);
+      endpoint.searchParams.set("readMask", mask);
+      try {
+        return await this.requestJsonWithAuth<Record<string, unknown>>({
+          url: endpoint.toString(),
+          accessToken: input.accessToken
+        });
+      } catch {
+        // Try next compatible readMask.
+      }
+    }
+
+    return {};
+  }
+
+  private async geocodeAddress(address: string): Promise<GeoPoint | null> {
+    const apiKey =
+      process.env.GOOGLE_PLACES_API_KEY?.trim() ??
+      process.env.GOOGLE_MAPS_API_KEY?.trim() ??
+      process.env.GOOGLE_API_KEY?.trim() ??
+      null;
+    if (!apiKey) {
+      return null;
+    }
+
+    try {
+      const endpoint = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+      endpoint.searchParams.set("address", address);
+      endpoint.searchParams.set("key", apiKey);
+      const response = await fetch(endpoint.toString(), {
+        headers: {
+          Accept: "application/json"
+        }
+      });
+      if (!response.ok) {
+        return null;
+      }
+      const payload = (await response.json()) as {
+        status?: string;
+        results?: Array<{
+          geometry?: {
+            location?: {
+              lat?: number;
+              lng?: number;
+            };
+          };
+        }>;
+      };
+
+      if (payload.status !== "OK") {
+        return null;
+      }
+      const point = payload.results?.[0]?.geometry?.location;
+      if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) {
+        return null;
+      }
+      return {
+        lat: Number(point.lat),
+        lng: Number(point.lng)
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolveLocationGeo(snapshot: {
+    storefrontAddress: Record<string, unknown> | null;
+    geo: GeoPoint | null;
+    formattedAddress: string | null;
+  }): Promise<GeoPoint | null> {
+    if (snapshot.geo) {
+      return snapshot.geo;
+    }
+
+    const formatted = snapshot.formattedAddress ?? addressFromStorefront(snapshot.storefrontAddress);
+    if (!formatted) {
+      return null;
+    }
+    return this.geocodeAddress(formatted);
+  }
+
+  private async fetchLocationSnapshot(input: {
+    context: RunContext;
+    location: ResolvedLocation;
+  }): Promise<LocationRichSnapshot> {
+    const fallback = await input.context.client.fetchLocation(input.location.locationName).catch(() => null);
+    const detail = await this.fetchLocationWithExtendedMask({
+      accessToken: input.context.token.accessToken,
+      locationName: input.location.locationName
+    }).catch(() => ({}));
+
+    const merged = {
+      ...(fallback ? asRecord(fallback as unknown) : {}),
+      ...detail
+    };
+    const storefrontAddress = asRecord(merged.storefrontAddress);
+    const formattedAddress = addressFromStorefront(storefrontAddress) ?? null;
+    const existingGeo = this.extractLocationGeo(merged);
+    const resolvedGeo = await this.resolveLocationGeo({
+      storefrontAddress,
+      geo: existingGeo,
+      formattedAddress
+    });
+
+    const reviews = await input.context.client
+      .fetchReviews(input.location.accountId, input.location.locationId)
+      .catch(() => []);
+    const posts = await input.context.client
+      .listPosts(input.location.accountId, input.location.locationId)
+      .catch(() => []);
+
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const postCount30d = posts.filter((post) => {
+      const timestamp = post.updateTime ?? post.createTime ?? null;
+      if (!timestamp) {
+        return false;
+      }
+      const timeMs = new Date(timestamp).getTime();
+      return Number.isFinite(timeMs) && timeMs >= thirtyDaysAgo;
+    }).length;
+
+    return {
+      locationName: input.location.locationName,
+      title: (typeof merged.title === "string" ? merged.title : null) ?? input.location.title,
+      websiteUri:
+        normalizeHttpUrl(typeof merged.websiteUri === "string" ? merged.websiteUri : null) ??
+        normalizeHttpUrl(input.location.websiteUri),
+      profileDescription: this.extractProfileDescription(merged),
+      categories: this.extractLocationCategories(merged),
+      attributes: this.extractLocationAttributes(merged),
+      regularHours: Object.keys(asRecord(merged.regularHours)).length ? asRecord(merged.regularHours) : null,
+      storefrontAddress: Object.keys(storefrontAddress).length ? storefrontAddress : null,
+      formattedAddress,
+      geo: resolvedGeo,
+      reviewCount: reviews.length,
+      averageRating: safeAverage(reviews.map((review) => parseStarRating(review.starRating))),
+      postCount30d
+    };
+  }
+
+  private async discoverTopCompetitors(input: {
+    snapshot: LocationRichSnapshot;
+    location: ResolvedLocation;
+    objectives: string[];
+    maxResults?: number;
+  }): Promise<CompetitorRecord[]> {
+    const apiKey =
+      process.env.GOOGLE_PLACES_API_KEY?.trim() ??
+      process.env.GOOGLE_MAPS_API_KEY?.trim() ??
+      process.env.GOOGLE_API_KEY?.trim() ??
+      null;
+    if (!apiKey) {
+      return [];
+    }
+
+    const limit = clamp(toNumber(input.maxResults, 5), 3, 10);
+    const radiusMeters = 16000;
+    const primaryCategory = input.snapshot.categories[0] ?? null;
+    const cityState = formatCityState(input.snapshot.storefrontAddress);
+    const objectiveHint = input.objectives[0] ? readableObjective(input.objectives[0]) : "local services";
+    const query = primaryCategory
+      ? `${primaryCategory} near ${cityState ?? input.snapshot.formattedAddress ?? ""}`.trim()
+      : `${input.snapshot.title ?? input.location.title ?? "Local business"} ${objectiveHint}`.trim();
+
+    const endpoint = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
+    endpoint.searchParams.set("query", query);
+    if (input.snapshot.geo) {
+      endpoint.searchParams.set("location", `${input.snapshot.geo.lat},${input.snapshot.geo.lng}`);
+      endpoint.searchParams.set("radius", String(radiusMeters));
+    }
+    endpoint.searchParams.set("key", apiKey);
+
+    try {
+      const payload = await fetch(endpoint.toString(), {
+        headers: {
+          Accept: "application/json"
+        }
+      }).then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Places API HTTP ${response.status}`);
+        }
+        return (await response.json()) as {
+          status?: string;
+          results?: Array<Record<string, unknown>>;
+        };
+      });
+
+      if (!(payload.status === "OK" || payload.status === "ZERO_RESULTS")) {
+        return [];
+      }
+
+      const ownName = normalizeBusinessName(input.snapshot.title ?? input.location.title ?? "");
+      const parsedCompetitors: CompetitorRecord[] = [];
+      for (const row of payload.results ?? []) {
+        const name = typeof row.name === "string" ? normalizeText(row.name) : "";
+        if (!name) {
+          continue;
+        }
+
+        const geometry = asRecord(row.geometry);
+        const locationPoint = asRecord(geometry.location);
+        const lat = toNumber(locationPoint.lat, Number.NaN);
+        const lng = toNumber(locationPoint.lng, Number.NaN);
+        const geo = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+        const distanceMiles = input.snapshot.geo && geo ? haversineMiles(input.snapshot.geo, geo) : null;
+        const rating = normalizeRating(row.rating);
+        const reviewCount = toNumber(row.user_ratings_total, 0);
+        const types = toStringArray(row.types);
+        const formattedAddress =
+          typeof row.formatted_address === "string"
+            ? row.formatted_address
+            : typeof row.vicinity === "string"
+              ? row.vicinity
+              : null;
+
+        let relevance = 50;
+        relevance += rating * 6;
+        relevance += Math.min(20, reviewCount / 12);
+        if (distanceMiles !== null) {
+          relevance -= Math.min(20, distanceMiles * 1.6);
+        }
+        if (primaryCategory && types.some((type) => type.toLowerCase().includes(primaryCategory.toLowerCase().split(" ")[0]))) {
+          relevance += 8;
+        }
+        relevance = clamp(Math.round(relevance), 0, 100);
+
+        parsedCompetitors.push({
+          name,
+          formattedAddress,
+          rating: rating || null,
+          userRatingCount: reviewCount || null,
+          primaryType: types.length ? types[0] ?? null : null,
+          types,
+          websiteUri: null,
+          distanceMiles,
+          relevanceScore: relevance
+        });
+      }
+
+      const competitors = parsedCompetitors
+        .filter((entry) => normalizeBusinessName(entry.name) !== ownName)
+        .sort((a, b) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0))
+        .slice(0, limit)
+        .map((entry, index) => ({ ...entry, rankPosition: index + 1 }));
+
+      return competitors;
+    } catch {
+      return [];
+    }
+  }
+
+  private buildSemanticSuggestionPrompt(input: {
+    location: ResolvedLocation;
+    snapshot: LocationRichSnapshot;
+    competitors: CompetitorRecord[];
+    objectives: string[];
+  }): string {
+    const locationName = input.snapshot.title ?? input.location.title ?? "This business";
+    const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "local area";
+    const currentCategories = input.snapshot.categories.length ? input.snapshot.categories.join(", ") : "none";
+    const competitorLines = input.competitors.length
+      ? input.competitors
+          .map((competitor) => {
+            const rating = competitor.rating ? `${competitor.rating.toFixed(1)}★` : "n/a";
+            const reviews = competitor.userRatingCount ?? 0;
+            return `- ${competitor.name} | rating ${rating} | reviews ${reviews} | type ${competitor.primaryType ?? "n/a"}`
+          })
+          .join("\n")
+      : "- none available";
+    const objectiveLine = input.objectives.length ? input.objectives.join("; ") : "Increase qualified local conversions";
+
+    return [
+      "You are an expert Google Business Profile strategist.",
+      "Generate profile optimization data for the business below.",
+      "",
+      "Return STRICT JSON with this exact shape:",
+      "{",
+      '  "profileDescription": "string",',
+      '  "qaPairs": [{"question":"string","answer":"string"}],',
+      '  "usps": ["string"],',
+      '  "suggestedCategories": ["string"],',
+      '  "suggestedServices": ["string"],',
+      '  "suggestedProducts": ["string"],',
+      '  "suggestedAttributes": ["string"],',
+      '  "hoursRecommendations": ["string"]',
+      "}",
+      "",
+      "Rules:",
+      "- Keep profileDescription 400-740 characters.",
+      "- Include hyperlocal wording and concrete service outcomes.",
+      "- qaPairs should be 8 to 12 high-intent GBP questions and concise answers.",
+      "- suggestedServices and suggestedProducts should be declarative and conversion-focused.",
+      "- Do not hallucinate unsupported guarantees.",
+      "",
+      "Business context:",
+      `- Business: ${locationName}`,
+      `- Local area: ${cityState}`,
+      `- Current categories: ${currentCategories}`,
+      `- Current review count: ${input.snapshot.reviewCount}`,
+      `- Current rating: ${input.snapshot.averageRating.toFixed(2)}`,
+      `- Current website: ${input.snapshot.websiteUri ?? "missing"}`,
+      `- Objectives: ${objectiveLine}`,
+      "",
+      "Top competitors:",
+      competitorLines,
+      "",
+      "Return JSON only."
+    ].join("\n");
+  }
+
+  private buildFallbackSemanticSuggestions(input: {
+    location: ResolvedLocation;
+    snapshot: LocationRichSnapshot;
+    objectives: string[];
+  }): LocationSemanticSuggestions {
+    const locationTitle = input.snapshot.title ?? input.location.title ?? "our business";
+    const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "the local area";
+    const objectiveLine = input.objectives[0] ? readableObjective(input.objectives[0]) : "local visibility";
+    const description = [
+      `${locationTitle} serves customers across ${cityState} with clear scope, reliable communication, and outcome-focused service delivery.`,
+      `Our team prioritizes ${objectiveLine}, transparent turnaround expectations, and practical recommendations tailored to local demand.`,
+      "Contact us for current availability and same-day guidance where applicable."
+    ].join(" ");
+
+    return {
+      profileDescription: truncateToMaxWords(description, 120),
+      qaPairs: [
+        {
+          question: `What areas does ${locationTitle} serve?`,
+          answer: `${locationTitle} serves ${cityState} and nearby neighborhoods with location-specific scheduling support.`
+        },
+        {
+          question: `How quickly can I get started with ${locationTitle}?`,
+          answer: "Most inquiries are answered quickly with scheduling options based on current service capacity."
+        }
+      ],
+      usps: [
+        "Local service coverage with transparent response windows",
+        "Structured delivery process with clear customer communication"
+      ],
+      suggestedCategories: input.snapshot.categories.slice(0, 3),
+      suggestedServices: input.objectives.slice(0, 4).map((objective) => `${readableObjective(objective)} service`),
+      suggestedProducts: [],
+      suggestedAttributes: input.snapshot.attributes.slice(0, 6),
+      hoursRecommendations: []
+    };
+  }
+
+  private async generateLocationSemanticSuggestions(input: {
+    location: ResolvedLocation;
+    snapshot: LocationRichSnapshot;
+    competitors: CompetitorRecord[];
+    objectives: string[];
+  }): Promise<LocationSemanticSuggestions> {
+    const fallback = this.buildFallbackSemanticSuggestions({
+      location: input.location,
+      snapshot: input.snapshot,
+      objectives: input.objectives
+    });
+    const apiKey =
+      process.env.GEMINI_API_KEY?.trim() ??
+      process.env.GOOGLE_AI_STUDIO_API_KEY?.trim() ??
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ??
+      process.env.GOOGLE_API_KEY?.trim() ??
+      null;
+    const model = process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
+
+    if (!apiKey) {
+      return {
+        ...fallback,
+        warning: "Gemini API key not configured; semantic suggestions generated from fallback rules.",
+        model: null
+      };
+    }
+
+    try {
+      const prompt = this.buildSemanticSuggestionPrompt({
+        location: input.location,
+        snapshot: input.snapshot,
+        competitors: input.competitors,
+        objectives: input.objectives
+      });
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.55,
+              topP: 0.9,
+              maxOutputTokens: 1800
+            }
+          })
+        }
+      );
+      if (!response.ok) {
+        return {
+          ...fallback,
+          warning: `Gemini API returned ${response.status}; fallback suggestions applied.`,
+          model
+        };
+      }
+
+      const payload = (await response.json()) as {
+        candidates?: Array<{
+          content?: { parts?: Array<{ text?: string }> };
+        }>;
+      };
+      const rawText = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("\n") ?? "";
+      const parsed = parseJsonObjectFromText(rawText);
+      if (!parsed) {
+        return {
+          ...fallback,
+          warning: "Gemini output did not parse as JSON; fallback suggestions applied.",
+          model
+        };
+      }
+
+      const qaRaw = Array.isArray(parsed.qaPairs) ? parsed.qaPairs : [];
+      const qaPairs = qaRaw
+        .map((entry) => {
+          const record = asRecord(entry);
+          const question = typeof record.question === "string" ? normalizeText(record.question) : "";
+          const answer = typeof record.answer === "string" ? normalizeText(record.answer) : "";
+          if (!question || !answer) {
+            return null;
+          }
+          return { question, answer };
+        })
+        .filter((entry): entry is { question: string; answer: string } => Boolean(entry))
+        .slice(0, 20);
+
+      return {
+        profileDescription:
+          typeof parsed.profileDescription === "string" && parsed.profileDescription.trim()
+            ? parsed.profileDescription.trim().slice(0, 750)
+            : fallback.profileDescription,
+        qaPairs: qaPairs.length ? qaPairs : fallback.qaPairs,
+        usps: toStringArray(parsed.usps).slice(0, 12),
+        suggestedCategories: toStringArray(parsed.suggestedCategories).slice(0, 8),
+        suggestedServices: toStringArray(parsed.suggestedServices).slice(0, 30),
+        suggestedProducts: toStringArray(parsed.suggestedProducts).slice(0, 30),
+        suggestedAttributes: toStringArray(parsed.suggestedAttributes).slice(0, 20),
+        hoursRecommendations: toStringArray(parsed.hoursRecommendations).slice(0, 10),
+        model
+      };
+    } catch (error) {
+      return {
+        ...fallback,
+        warning: error instanceof Error ? error.message : String(error),
+        model
+      };
+    }
+  }
+
+  private async runCompetitorBenchmark(input: {
+    context: RunContext;
+  }): Promise<Array<Record<string, unknown>>> {
+    const rows: Array<Record<string, unknown>> = [];
+    for (const location of input.context.locations) {
+      const snapshot = await this.fetchLocationSnapshot({ context: input.context, location });
+      const competitors = await this.discoverTopCompetitors({
+        snapshot,
+        location,
+        objectives: input.context.settings.objectives,
+        maxResults: 5
+      });
+      const avgCompetitorRating = safeAverage(
+        competitors.map((competitor) => competitor.rating ?? 0).filter((value) => value > 0)
+      );
+      const avgCompetitorReviewCount = safeAverage(
+        competitors.map((competitor) => competitor.userRatingCount ?? 0).filter((value) => value > 0)
+      );
+
+      const missing: string[] = [];
+      if (!snapshot.categories.length) {
+        missing.push("categories");
+      }
+      if (!snapshot.profileDescription) {
+        missing.push("profile.description");
+      }
+      if (!snapshot.websiteUri) {
+        missing.push("websiteUri");
+      }
+      if (!snapshot.regularHours) {
+        missing.push("regularHours");
+      }
+      if (!snapshot.attributes.length) {
+        missing.push("attributes");
+      }
+
+      rows.push({
+        accountId: location.accountId,
+        locationName: location.locationName,
+        title: snapshot.title ?? location.title,
+        missing,
+        benchmark: {
+          reviewCount: snapshot.reviewCount,
+          averageRating: Number(snapshot.averageRating.toFixed(2)),
+          postCount30d: snapshot.postCount30d,
+          avgCompetitorRating: Number(avgCompetitorRating.toFixed(2)),
+          avgCompetitorReviewCount: Math.round(avgCompetitorReviewCount),
+          ratingDeltaVsCompetitors: Number((snapshot.averageRating - avgCompetitorRating).toFixed(2)),
+          reviewDeltaVsCompetitors: Math.round(snapshot.reviewCount - avgCompetitorReviewCount)
+        },
+        competitors
+      });
+    }
+    return rows;
+  }
+
   private async executeProfilePatch(input: {
     action: BlitzAction;
     context: RunContext;
@@ -1340,17 +2088,111 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       };
     }
 
+    if (input.objective === "ai_description_qna_optimization") {
+      const patched: Array<Record<string, unknown>> = [];
+      const skipped: Array<Record<string, unknown>> = [];
+      const failed: Array<Record<string, unknown>> = [];
+      const warnings = [...input.context.warnings];
+      const generatedQaPayloads: Array<Record<string, unknown>> = [];
+
+      for (const location of input.context.locations) {
+        const snapshot = await this.fetchLocationSnapshot({ context: input.context, location });
+        const competitors = await this.discoverTopCompetitors({
+          snapshot,
+          location,
+          objectives: input.context.settings.objectives,
+          maxResults: 5
+        });
+        const suggestions = await this.generateLocationSemanticSuggestions({
+          location,
+          snapshot,
+          competitors,
+          objectives: input.context.settings.objectives
+        });
+        if (suggestions.warning) {
+          warnings.push(`${location.locationName}: ${suggestions.warning}`);
+        }
+
+        generatedQaPayloads.push({
+          locationName: location.locationName,
+          title: snapshot.title ?? location.title,
+          qaPairs: suggestions.qaPairs,
+          usps: suggestions.usps,
+          suggestedCategories: suggestions.suggestedCategories,
+          suggestedServices: suggestions.suggestedServices,
+          suggestedProducts: suggestions.suggestedProducts,
+          suggestedAttributes: suggestions.suggestedAttributes,
+          hoursRecommendations: suggestions.hoursRecommendations,
+          model: suggestions.model ?? null
+        });
+
+        const nextDescription = suggestions.profileDescription ? normalizeText(suggestions.profileDescription) : "";
+        const currentDescription = snapshot.profileDescription ? normalizeText(snapshot.profileDescription) : "";
+        if (!nextDescription || nextDescription === currentDescription) {
+          skipped.push({
+            locationName: location.locationName,
+            reason: nextDescription ? "description_unchanged" : "no_description_generated"
+          });
+          continue;
+        }
+
+        try {
+          await input.context.client.patchLocation(
+            location.locationName,
+            {
+              profile: {
+                description: nextDescription
+              }
+            },
+            ["profile"]
+          );
+          patched.push({
+            locationName: location.locationName,
+            title: snapshot.title ?? location.title,
+            previousDescriptionLength: currentDescription.length,
+            nextDescriptionLength: nextDescription.length,
+            competitorCount: competitors.length
+          });
+        } catch (error) {
+          failed.push({
+            locationName: location.locationName,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      if (!patched.length && failed.length && !skipped.length) {
+        throw new Error(`AI description optimization failed for all locations: ${failed[0]?.error ?? "unknown error"}`);
+      }
+
+      return {
+        objective: input.objective,
+        patchedLocations: patched,
+        skippedLocations: skipped,
+        failedLocations: failed,
+        qaOptimization: {
+          apiStatus: "qa_api_deprecated_manual_queue_only",
+          locationCount: generatedQaPayloads.length,
+          generatedQaPayloads
+        },
+        warnings
+      };
+    }
+
     const checks = await Promise.all(
       input.context.locations.slice(0, 10).map(async (location) => {
-        const detail = await input.context.client.fetchLocation(location.locationName);
+        const snapshot = await this.fetchLocationSnapshot({ context: input.context, location });
         return {
           accountId: location.accountId,
           locationName: location.locationName,
-          title: detail?.title ?? location.title,
-          hasCategories: Array.isArray(detail?.categories) && detail.categories.length > 0,
-          hasHours: Boolean(detail?.regularHours),
-          hasAttributes: Array.isArray(detail?.attributes) && detail.attributes.length > 0,
-          hasProfileDescription: Boolean(asRecord(detail?.profile).description)
+          title: snapshot.title ?? location.title,
+          hasCategories: snapshot.categories.length > 0,
+          hasHours: Boolean(snapshot.regularHours),
+          hasAttributes: snapshot.attributes.length > 0,
+          hasProfileDescription: Boolean(snapshot.profileDescription),
+          reviewCount: snapshot.reviewCount,
+          averageRating: Number(snapshot.averageRating.toFixed(2)),
+          postCount30d: snapshot.postCount30d
         };
       })
     );
@@ -1369,38 +2211,194 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     action: BlitzAction;
     context: RunContext;
   }): Promise<Record<string, unknown>> {
+    const objective =
+      typeof input.action.payload.objective === "string"
+        ? input.action.payload.objective
+        : "completeness_gap_matrix";
+
+    if (objective === "competitor_benchmark_and_gap_matrix") {
+      const matrix = await this.runCompetitorBenchmark({
+        context: input.context
+      });
+      return {
+        objective,
+        locationsAnalyzed: matrix.length,
+        benchmarked: true,
+        gapMatrix: matrix
+      };
+    }
+
+    if (objective === "auto_fill_profile_fields") {
+      const applyRecommendations = input.action.payload.applyRecommendations !== false;
+      const explicitHours = asRecord(input.action.payload.defaultRegularHours);
+      const metadataHours = asRecord(asRecord(input.context.settings.metadata).defaultRegularHours);
+      const defaultHours = Object.keys(explicitHours).length ? explicitHours : metadataHours;
+
+      const patched: Array<Record<string, unknown>> = [];
+      const skipped: Array<Record<string, unknown>> = [];
+      const failed: Array<Record<string, unknown>> = [];
+      const warnings = [...input.context.warnings];
+
+      for (const location of input.context.locations) {
+        const snapshot = await this.fetchLocationSnapshot({ context: input.context, location });
+        const competitors = await this.discoverTopCompetitors({
+          snapshot,
+          location,
+          objectives: input.context.settings.objectives,
+          maxResults: 5
+        });
+        const suggestions = await this.generateLocationSemanticSuggestions({
+          location,
+          snapshot,
+          competitors,
+          objectives: input.context.settings.objectives
+        });
+        if (suggestions.warning) {
+          warnings.push(`${location.locationName}: ${suggestions.warning}`);
+        }
+
+        const patch: Record<string, unknown> = {};
+        const updateMask: string[] = [];
+        const unavailableWrites: string[] = [];
+
+        const profileDescription = suggestions.profileDescription ? suggestions.profileDescription.trim() : "";
+        if (profileDescription) {
+          patch.profile = {
+            description: profileDescription
+          };
+          updateMask.push("profile");
+        }
+
+        if (!snapshot.websiteUri) {
+          const fallbackWebsite =
+            normalizeHttpUrl(input.context.settings.defaultPostUrl) ??
+            normalizeHttpUrl(location.websiteUri);
+          if (fallbackWebsite) {
+            patch.websiteUri = fallbackWebsite;
+            updateMask.push("websiteUri");
+          }
+        }
+
+        if (!snapshot.categories.length && suggestions.suggestedCategories.length) {
+          patch.categories = suggestions.suggestedCategories.slice(0, 4).map((category) => ({
+            displayName: category
+          }));
+          updateMask.push("categories");
+        }
+
+        if (!snapshot.regularHours && Object.keys(defaultHours).length > 0) {
+          patch.regularHours = defaultHours;
+          updateMask.push("regularHours");
+        }
+
+        if (suggestions.suggestedAttributes.length > 0) {
+          unavailableWrites.push("attributes");
+        }
+        if (suggestions.suggestedServices.length > 0) {
+          unavailableWrites.push("services");
+        }
+        if (suggestions.suggestedProducts.length > 0) {
+          unavailableWrites.push("products");
+        }
+        if (suggestions.qaPairs.length > 0) {
+          unavailableWrites.push("q_and_a");
+        }
+
+        if (!applyRecommendations) {
+          skipped.push({
+            locationName: location.locationName,
+            reason: "apply_recommendations_disabled",
+            suggestedUpdateMask: [...new Set(updateMask)],
+            unavailableWrites
+          });
+          continue;
+        }
+
+        const dedupedMask = [...new Set(updateMask)];
+        if (!dedupedMask.length) {
+          skipped.push({
+            locationName: location.locationName,
+            reason: "no_mutable_fields_needed",
+            unavailableWrites
+          });
+          continue;
+        }
+
+        try {
+          await input.context.client.patchLocation(location.locationName, patch, dedupedMask);
+          patched.push({
+            locationName: location.locationName,
+            title: snapshot.title ?? location.title,
+            updateMask: dedupedMask,
+            unavailableWrites,
+            suggestions: {
+              usps: suggestions.usps,
+              categories: suggestions.suggestedCategories,
+              services: suggestions.suggestedServices,
+              products: suggestions.suggestedProducts,
+              attributes: suggestions.suggestedAttributes,
+              hoursRecommendations: suggestions.hoursRecommendations,
+              qaPairs: suggestions.qaPairs
+            }
+          });
+        } catch (error) {
+          failed.push({
+            locationName: location.locationName,
+            updateMask: dedupedMask,
+            error: error instanceof Error ? error.message : String(error),
+            unavailableWrites
+          });
+        }
+      }
+
+      if (!patched.length && failed.length && !skipped.length) {
+        throw new Error(`Auto-fill profile fields failed for all locations: ${failed[0]?.error ?? "unknown error"}`);
+      }
+
+      return {
+        objective,
+        applyRecommendations,
+        patchedLocations: patched,
+        skippedLocations: skipped,
+        failedLocations: failed,
+        warnings
+      };
+    }
+
     const matrix = await Promise.all(
       input.context.locations.map(async (location) => {
-        const detail = await input.context.client.fetchLocation(location.locationName);
-        const profile = asRecord(detail?.profile);
+        const snapshot = await this.fetchLocationSnapshot({ context: input.context, location });
         const missing: string[] = [];
-        if (!(Array.isArray(detail?.categories) && detail.categories.length > 0)) {
+        if (!snapshot.categories.length) {
           missing.push("categories");
         }
-        if (!detail?.regularHours) {
+        if (!snapshot.regularHours) {
           missing.push("regularHours");
         }
-        if (!(Array.isArray(detail?.attributes) && detail.attributes.length > 0)) {
+        if (!snapshot.attributes.length) {
           missing.push("attributes");
         }
-        if (!profile.description) {
+        if (!snapshot.profileDescription) {
           missing.push("profile.description");
         }
-        if (!detail?.websiteUri) {
+        if (!snapshot.websiteUri) {
           missing.push("websiteUri");
         }
 
         return {
           accountId: location.accountId,
           locationName: location.locationName,
-          title: detail?.title ?? location.title,
-          missing
+          title: snapshot.title ?? location.title,
+          missing,
+          reviewCount: snapshot.reviewCount,
+          averageRating: Number(snapshot.averageRating.toFixed(2)),
+          postCount30d: snapshot.postCount30d
         };
       })
     );
 
     return {
-      objective: input.action.payload.objective ?? "completeness_gap_matrix",
+      objective,
       locationsAnalyzed: matrix.length,
       gapMatrix: matrix
     };

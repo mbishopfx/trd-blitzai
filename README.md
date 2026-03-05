@@ -149,6 +149,7 @@ supabase db push
 - `TINYURL_API_KEY` (for sitemap URL shortening in post_publish worker actions)
 - `GEMINI_API_KEY` (preferred for GBP post generation content)
 - `GOOGLE_AI_STUDIO_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `GOOGLE_API_KEY` (optional aliases)
+- `GOOGLE_PLACES_API_KEY` / `GOOGLE_MAPS_API_KEY` (recommended for competitor benchmark + geocoding; falls back to `GOOGLE_API_KEY`)
 - `GEMINI_MODEL` (optional, defaults to `gemini-2.0-flash`)
 
 ### Railway (`services/worker-py`)

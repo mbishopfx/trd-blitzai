@@ -36,12 +36,16 @@ export class DefaultBlitzPlanner implements ActionPlanner {
       case "completeness":
         return [
           baseAction("completeness", "attribute_update", "medium", {
-            objective: "completeness_gap_matrix",
-            fields: ["categories", "services", "attributes", "hours"]
+            objective: "competitor_benchmark_and_gap_matrix",
+            fields: ["categories", "services", "attributes", "hours", "profile", "website"]
           }),
           baseAction("completeness", "profile_patch", "medium", {
-            objective: "profile_declarative_copy_refresh",
-            model: "approved_template_v1"
+            objective: "ai_description_qna_optimization",
+            model: "gemini"
+          }),
+          baseAction("completeness", "attribute_update", "medium", {
+            objective: "auto_fill_profile_fields",
+            applyRecommendations: true
           })
         ];
       case "media":
