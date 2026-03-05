@@ -148,7 +148,7 @@ supabase db push
 - `GOOGLE_OAUTH_REDIRECT_URI` (optional override; fallback works without `NEXT_PUBLIC_SITE_URL`)
 - `TINYURL_API_KEY` (for sitemap URL shortening in post_publish worker actions)
 - `GEMINI_API_KEY` (preferred for GBP post generation content)
-- `GOOGLE_AI_STUDIO_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` (optional aliases)
+- `GOOGLE_AI_STUDIO_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `GOOGLE_API_KEY` (optional aliases)
 - `GEMINI_MODEL` (optional, defaults to `gemini-2.0-flash`)
 
 ### Railway (`services/worker-py`)

@@ -1189,6 +1189,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       process.env.GEMINI_API_KEY?.trim() ??
       process.env.GOOGLE_AI_STUDIO_API_KEY?.trim() ??
       process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ??
+      process.env.GOOGLE_API_KEY?.trim() ??
       null;
     const model = process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
 
