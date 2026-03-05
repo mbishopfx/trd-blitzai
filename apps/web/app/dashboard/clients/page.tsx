@@ -20,6 +20,15 @@ interface OAuthStartResponse {
   redirectUri: string;
 }
 
+interface SitemapAutofillResponse {
+  summary: {
+    total: number;
+    updated: number;
+    skipped: number;
+    failed: number;
+  };
+}
+
 function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
@@ -31,6 +40,7 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [autofillStatus, setAutofillStatus] = useState<string | null>(null);
   const [seedQueryState, setSeedQueryState] = useState<{
     oauthConnected: boolean;
     seededClients: string | null;
@@ -100,6 +110,7 @@ export default function ClientsPage() {
 
     setBusy(true);
     setError(null);
+    setAutofillStatus(null);
 
     try {
       const oauthStart = await request<OAuthStartResponse>(
@@ -123,11 +134,38 @@ export default function ClientsPage() {
 
     setBusy(true);
     setError(null);
+    setAutofillStatus(null);
     try {
       await request(`/api/v1/clients/${client.id}`, {
         method: "DELETE"
       });
       loadClients();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const autofillSitemaps = async () => {
+    if (!selectedOrgId) {
+      setError("Select an organization before auto-filling sitemaps");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setAutofillStatus(null);
+    try {
+      const payload = await request<SitemapAutofillResponse>(`/api/v1/orgs/${selectedOrgId}/clients/sitemaps/autofill`, {
+        method: "POST",
+        body: {
+          overwrite: false
+        }
+      });
+      setAutofillStatus(
+        `Sitemap autofill finished. Updated ${payload.summary.updated}/${payload.summary.total}, skipped ${payload.summary.skipped}, failed ${payload.summary.failed}.`
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -146,6 +184,9 @@ export default function ClientsPage() {
           <button type="button" className={styles.buttonPrimary} onClick={() => void startOAuthSeed()} disabled={busy}>
             {busy ? "Starting OAuth..." : "Connect Google + Seed Clients"}
           </button>
+          <button type="button" className={styles.buttonSecondary} onClick={() => void autofillSitemaps()} disabled={busy}>
+            Auto-fill Sitemaps
+          </button>
           <button type="button" className={styles.buttonGhost} onClick={loadClients} disabled={loading}>
             Refresh Client List
           </button>
@@ -155,6 +196,7 @@ export default function ClientsPage() {
             {seedStatusLabel}
           </span>
         ) : null}
+        {autofillStatus ? <span className={`${styles.badge} ${styles.statusActive}`}>{autofillStatus}</span> : null}
         {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
       </section>
 

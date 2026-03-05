@@ -198,6 +198,41 @@ export default function ClientOrchestrationSettingsPage() {
     }
   };
 
+  const autoDetectSitemap = async () => {
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const payload = await request<{
+        updatedSitemapUrl: string | null;
+        updatedDefaultPostUrl: string | null;
+        discovery: { source: string };
+      }>(`/api/v1/clients/${clientId}/orchestration/sitemap/autofill`, {
+        method: "POST",
+        body: {
+          overwrite: false
+        }
+      });
+
+      if (payload.updatedSitemapUrl) {
+        setSitemapUrl(payload.updatedSitemapUrl);
+      }
+      if (payload.updatedDefaultPostUrl) {
+        setDefaultPostUrl(payload.updatedDefaultPostUrl);
+      }
+      setStatus(
+        payload.updatedSitemapUrl
+          ? `Auto-detected sitemap (${payload.discovery.source}) and saved orchestration URL settings.`
+          : "No sitemap was discovered, but default post URL was updated when available."
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const uploadFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) {
       return;
@@ -440,6 +475,11 @@ export default function ClientOrchestrationSettingsPage() {
               placeholder="https://client.com/sitemap.xml"
             />
           </label>
+          <div className={styles.inlineActions}>
+            <button type="button" className={styles.buttonSecondary} onClick={() => void autoDetectSitemap()} disabled={busy}>
+              Auto-detect Sitemap
+            </button>
+          </div>
           <label className={styles.field}>
             <span className={styles.label}>Default GBP Post URL</span>
             <input
