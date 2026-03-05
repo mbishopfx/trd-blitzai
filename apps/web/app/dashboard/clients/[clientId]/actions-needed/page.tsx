@@ -52,6 +52,29 @@ function toStringArray(value: unknown): string[] {
   return value.map(String).map((entry) => entry.trim()).filter(Boolean);
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function operationSummary(payload: Record<string, unknown>): string {
+  const executionPlan = asRecord(payload.executionPlan);
+  const operations = Array.isArray(executionPlan.operations) ? executionPlan.operations : [];
+  const kinds = operations
+    .map((entry) => {
+      const record = asRecord(entry);
+      return typeof record.kind === "string" ? record.kind : "";
+    })
+    .filter(Boolean);
+  if (kinds.length) {
+    return [...new Set(kinds)].join(", ");
+  }
+  const updateMask = toStringArray(payload.updateMask);
+  return updateMask.join(", ");
+}
+
 export default function ClientActionsNeededPage() {
   const { clientId } = useParams<{ clientId: string }>();
   const { request } = useDashboardContext();
@@ -181,7 +204,7 @@ export default function ClientActionsNeededPage() {
                   <th>Location</th>
                   <th>Risk</th>
                   <th>Status</th>
-                  <th>Update Mask</th>
+                  <th>Operations</th>
                   <th>Created</th>
                   <th>Actions</th>
                 </tr>
@@ -189,7 +212,7 @@ export default function ClientActionsNeededPage() {
               <tbody>
                 {actionsNeeded.map((item) => {
                   const payload = item.payload ?? {};
-                  const updateMask = toStringArray(payload.updateMask).join(", ");
+                  const operations = operationSummary(payload);
                   const busy = busyId === item.id;
                   return (
                     <tr key={item.id}>
@@ -200,7 +223,7 @@ export default function ClientActionsNeededPage() {
                       <td>{item.locationName ?? item.locationId ?? "N/A"}</td>
                       <td>{item.riskTier}</td>
                       <td>{item.status}</td>
-                      <td>{updateMask || "N/A"}</td>
+                      <td>{operations || "N/A"}</td>
                       <td>{formatDate(item.createdAt)}</td>
                       <td>
                         <div className={styles.kpiRow}>

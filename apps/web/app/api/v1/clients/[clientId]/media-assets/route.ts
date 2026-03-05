@@ -83,16 +83,31 @@ export async function POST(request: NextRequest, { params }: Params) {
   const contentType = request.headers.get("content-type") ?? "";
   const supabase = getSupabaseServiceClient();
   const bucket = bucketNameForClient(params.clientId);
+  const bucketConfig = {
+    public: false,
+    fileSizeLimit: 150 * 1024 * 1024,
+    allowedMimeTypes: [
+      "image/png",
+      "image/jpeg",
+      "image/webp",
+      "image/heic",
+      "image/gif",
+      "video/mp4",
+      "video/quicktime",
+      "video/webm"
+    ]
+  };
 
   const { data: existingBucket } = await supabase.storage.getBucket(bucket);
   if (!existingBucket) {
-    const { error: createBucketError } = await supabase.storage.createBucket(bucket, {
-      public: false,
-      fileSizeLimit: 25 * 1024 * 1024,
-      allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "image/heic", "image/gif"]
-    });
+    const { error: createBucketError } = await supabase.storage.createBucket(bucket, bucketConfig);
     if (createBucketError && !createBucketError.message.toLowerCase().includes("already exists")) {
       return fail(`Failed to create client media bucket: ${createBucketError.message}`, 500);
+    }
+  } else {
+    const { error: updateBucketError } = await supabase.storage.updateBucket(bucket, bucketConfig);
+    if (updateBucketError) {
+      return fail(`Failed to update client media bucket policy: ${updateBucketError.message}`, 500);
     }
   }
 

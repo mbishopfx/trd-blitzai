@@ -1,8 +1,17 @@
-import type { GbpAccount, GbpLocation, GbpPost, GbpPostPayload, GbpReview } from "./types";
+import type {
+  GbpAccount,
+  GbpAttributeMetadata,
+  GbpLocation,
+  GbpLocationMediaItem,
+  GbpPlaceActionLink,
+  GbpPost,
+  GbpPostPayload,
+  GbpReview
+} from "./types";
 
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  body?: Record<string, unknown>;
+  body?: unknown;
 }
 
 export class GbpApiClient {
@@ -15,7 +24,7 @@ export class GbpApiClient {
         Authorization: `Bearer ${this.accessToken}`,
         "Content-Type": "application/json"
       },
-      body: options.body ? JSON.stringify(options.body) : undefined
+      body: options.body === undefined ? undefined : JSON.stringify(options.body)
     });
 
     if (!response.ok) {
@@ -23,7 +32,16 @@ export class GbpApiClient {
       throw new Error(`GBP API request failed (${response.status}): ${text.slice(0, 400)}`);
     }
 
-    return (await response.json()) as T;
+    if (response.status === 204) {
+      return {} as T;
+    }
+
+    const text = await response.text();
+    if (!text.trim()) {
+      return {} as T;
+    }
+
+    return JSON.parse(text) as T;
   }
 
   async listAccounts(): Promise<GbpAccount[]> {
@@ -99,6 +117,57 @@ export class GbpApiClient {
     });
   }
 
+  async listLocationMedia(accountId: string, locationId: string, pageSize = 100): Promise<GbpLocationMediaItem[]> {
+    const media: GbpLocationMediaItem[] = [];
+    let pageToken: string | null = null;
+    const boundedPageSize = Math.max(1, Math.min(pageSize, 100));
+
+    do {
+      const endpoint = new URL(`https://mybusiness.googleapis.com/v4/accounts/${accountId}/locations/${locationId}/media`);
+      endpoint.searchParams.set("pageSize", String(boundedPageSize));
+      if (pageToken) {
+        endpoint.searchParams.set("pageToken", pageToken);
+      }
+
+      const result = await this.request<{
+        mediaItems?: GbpLocationMediaItem[];
+        nextPageToken?: string;
+      }>(endpoint.toString());
+      media.push(...(result.mediaItems ?? []));
+      pageToken = typeof result.nextPageToken === "string" && result.nextPageToken ? result.nextPageToken : null;
+    } while (pageToken);
+
+    return media;
+  }
+
+  async uploadLocationMedia(input: {
+    accountId: string;
+    locationId: string;
+    mediaFormat: "PHOTO" | "VIDEO";
+    sourceUrl: string;
+    description?: string;
+    locationCategory?: string;
+  }): Promise<GbpLocationMediaItem> {
+    const endpoint = `https://mybusiness.googleapis.com/v4/accounts/${input.accountId}/locations/${input.locationId}/media`;
+    const body: Record<string, unknown> = {
+      mediaFormat: input.mediaFormat,
+      sourceUrl: input.sourceUrl
+    };
+    if (input.description?.trim()) {
+      body.description = input.description.trim().slice(0, 900);
+    }
+    if (input.locationCategory?.trim()) {
+      body.locationAssociation = {
+        category: input.locationCategory.trim()
+      };
+    }
+
+    return this.request<GbpLocationMediaItem>(endpoint, {
+      method: "POST",
+      body
+    });
+  }
+
   async fetchReviews(accountId: string, locationId: string): Promise<GbpReview[]> {
     const endpoint = `https://mybusiness.googleapis.com/v4/accounts/${accountId}/locations/${locationId}/reviews`;
     const result = await this.request<{ reviews?: GbpReview[] }>(endpoint);
@@ -126,6 +195,111 @@ export class GbpApiClient {
     return this.request<GbpLocation>(url.toString(), {
       method: "PATCH",
       body: patch
+    });
+  }
+
+  async updateLocationAttributes(input: {
+    locationName: string;
+    attributes: Array<Record<string, unknown>>;
+    attributeMask: string[];
+  }): Promise<{ name: string; attributes?: Array<Record<string, unknown>> }> {
+    const endpoint = new URL(`https://mybusinessbusinessinformation.googleapis.com/v1/${input.locationName}/attributes`);
+    const dedupedMask = [...new Set(input.attributeMask.map((entry) => entry.trim()).filter(Boolean))];
+    if (!dedupedMask.length) {
+      throw new Error("attributeMask is required for updateLocationAttributes");
+    }
+
+    endpoint.searchParams.set("attributeMask", dedupedMask.join(","));
+    return this.request<{ name: string; attributes?: Array<Record<string, unknown>> }>(endpoint.toString(), {
+      method: "PATCH",
+      body: {
+        name: `${input.locationName}/attributes`,
+        attributes: input.attributes
+      }
+    });
+  }
+
+  async listAttributeMetadata(input: {
+    parentLocationName: string;
+    languageCode?: string;
+    pageSize?: number;
+  }): Promise<GbpAttributeMetadata[]> {
+    const pageSize = Math.max(1, Math.min(200, input.pageSize ?? 200));
+    const languageCode = input.languageCode?.trim() || "en";
+    const metadata: GbpAttributeMetadata[] = [];
+    let pageToken: string | null = null;
+
+    do {
+      const endpoint = new URL("https://mybusinessbusinessinformation.googleapis.com/v1/attributes");
+      endpoint.searchParams.set("parent", input.parentLocationName);
+      endpoint.searchParams.set("languageCode", languageCode);
+      endpoint.searchParams.set("pageSize", String(pageSize));
+      if (pageToken) {
+        endpoint.searchParams.set("pageToken", pageToken);
+      }
+
+      const result = await this.request<{
+        attributes?: GbpAttributeMetadata[];
+        nextPageToken?: string;
+      }>(endpoint.toString());
+
+      metadata.push(...(result.attributes ?? []));
+      pageToken = typeof result.nextPageToken === "string" && result.nextPageToken ? result.nextPageToken : null;
+    } while (pageToken);
+
+    return metadata;
+  }
+
+  async listPlaceActionLinks(locationId: string): Promise<GbpPlaceActionLink[]> {
+    const links: GbpPlaceActionLink[] = [];
+    let pageToken: string | null = null;
+
+    do {
+      const endpoint = new URL(
+        `https://mybusinessplaceactions.googleapis.com/v1/locations/${encodeURIComponent(locationId)}/placeActionLinks`
+      );
+      endpoint.searchParams.set("pageSize", "100");
+      if (pageToken) {
+        endpoint.searchParams.set("pageToken", pageToken);
+      }
+
+      const result = await this.request<{
+        placeActionLinks?: GbpPlaceActionLink[];
+        nextPageToken?: string;
+      }>(endpoint.toString());
+      links.push(...(result.placeActionLinks ?? []));
+      pageToken = typeof result.nextPageToken === "string" && result.nextPageToken ? result.nextPageToken : null;
+    } while (pageToken);
+
+    return links;
+  }
+
+  async createPlaceActionLink(
+    locationId: string,
+    payload: Pick<GbpPlaceActionLink, "uri" | "placeActionType" | "isPreferred">
+  ): Promise<GbpPlaceActionLink> {
+    const endpoint = `https://mybusinessplaceactions.googleapis.com/v1/locations/${encodeURIComponent(locationId)}/placeActionLinks`;
+    return this.request<GbpPlaceActionLink>(endpoint, {
+      method: "POST",
+      body: payload as Record<string, unknown>
+    });
+  }
+
+  async patchPlaceActionLink(
+    name: string,
+    payload: Pick<GbpPlaceActionLink, "uri" | "placeActionType" | "isPreferred">,
+    updateMask: string[]
+  ): Promise<GbpPlaceActionLink> {
+    const endpoint = new URL(`https://mybusinessplaceactions.googleapis.com/v1/${name}`);
+    const dedupedMask = [...new Set(updateMask.map((entry) => entry.trim()).filter(Boolean))];
+    if (!dedupedMask.length) {
+      throw new Error("updateMask is required for patchPlaceActionLink");
+    }
+    endpoint.searchParams.set("updateMask", dedupedMask.join(","));
+
+    return this.request<GbpPlaceActionLink>(endpoint.toString(), {
+      method: "PATCH",
+      body: payload as Record<string, unknown>
     });
   }
 }

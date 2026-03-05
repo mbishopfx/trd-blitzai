@@ -35,6 +35,36 @@ export interface GbpLocation {
   };
 }
 
+export interface GbpAttributeMetadata {
+  parent?: string;
+  displayName?: string;
+  valueType?: "ATTRIBUTE_VALUE_TYPE_UNSPECIFIED" | "BOOL" | "ENUM" | "URL" | "REPEATED_ENUM" | string;
+  repeatable?: boolean;
+  deprecated?: boolean;
+  valueMetadata?: Array<Record<string, unknown>>;
+}
+
+export interface GbpPlaceActionLink {
+  name?: string;
+  uri?: string;
+  placeActionType?:
+    | "PLACE_ACTION_TYPE_UNSPECIFIED"
+    | "APPOINTMENT"
+    | "ONLINE_APPOINTMENT"
+    | "DINING_RESERVATION"
+    | "FOOD_ORDERING"
+    | "FOOD_DELIVERY"
+    | "FOOD_TAKEOUT"
+    | "SHOP_ONLINE"
+    | "SOLOPRENEUR_APPOINTMENT"
+    | string;
+  isPreferred?: boolean;
+  isEditable?: boolean;
+  providerType?: string;
+  createTime?: string;
+  updateTime?: string;
+}
+
 export interface GbpReview {
   name: string;
   reviewId?: string;
@@ -54,6 +84,17 @@ export interface GbpPostPayload {
   topicType: "STANDARD" | "EVENT" | "OFFER";
   mediaUrl?: string;
   ctaUrl?: string;
+}
+
+export interface GbpLocationMediaItem {
+  name?: string;
+  mediaFormat?: "PHOTO" | "VIDEO" | string;
+  sourceUrl?: string;
+  googleUrl?: string;
+  thumbnailUrl?: string;
+  createTime?: string;
+  updateTime?: string;
+  description?: string;
 }
 
 export interface GbpApiConfig {

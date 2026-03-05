@@ -100,6 +100,55 @@ function toneAdjustedReply(input: { baseReply: string; style: string }): string 
   return base;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(String).map((entry) => entry.trim()).filter(Boolean);
+}
+
+function normalizeHttpUrl(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const url = new URL(trimmed.startsWith("http://") || trimmed.startsWith("https://") ? trimmed : `https://${trimmed}`);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function toBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") {
+      return true;
+    }
+    if (normalized === "false") {
+      return false;
+    }
+  }
+  return false;
+}
+
 async function resolveRuntimeContext(
   clientId: string,
   options?: { locationName?: string | null; locationId?: string | null; accountName?: string | null }
@@ -480,6 +529,168 @@ export async function autoReplyClientReviews(input: {
   };
 }
 
+export type GbpExecutionOperation =
+  | {
+      kind: "patch_location";
+      patch: Record<string, unknown>;
+      updateMask: string[];
+    }
+  | {
+      kind: "update_attributes";
+      attributes: Array<Record<string, unknown>>;
+      attributeMask: string[];
+    }
+  | {
+      kind: "upsert_place_action_links";
+      links: Array<Record<string, unknown>>;
+    };
+
+async function executeGbpOperation(input: {
+  runtime: RuntimeContext;
+  operation: GbpExecutionOperation;
+}): Promise<Record<string, unknown>> {
+  if (input.operation.kind === "patch_location") {
+    const dedupedMask = [...new Set(input.operation.updateMask.map((entry) => entry.trim()).filter(Boolean))];
+    if (!dedupedMask.length) {
+      throw new Error("patch_location requires updateMask");
+    }
+    if (!input.operation.patch || typeof input.operation.patch !== "object" || Array.isArray(input.operation.patch)) {
+      throw new Error("patch_location requires patch object");
+    }
+    await input.runtime.client.patchLocation(input.runtime.locationName, input.operation.patch, dedupedMask);
+    return {
+      kind: "patch_location",
+      updateMask: dedupedMask
+    };
+  }
+
+  if (input.operation.kind === "update_attributes") {
+    const attributeMask = [...new Set(input.operation.attributeMask.map((entry) => entry.trim()).filter(Boolean))];
+    if (!attributeMask.length) {
+      throw new Error("update_attributes requires attributeMask");
+    }
+    const attributes = input.operation.attributes
+      .map((entry) => asRecord(entry))
+      .filter((entry) => Object.keys(entry).length > 0);
+    if (!attributes.length) {
+      throw new Error("update_attributes requires at least one attribute object");
+    }
+
+    await input.runtime.client.updateLocationAttributes({
+      locationName: input.runtime.locationName,
+      attributes,
+      attributeMask
+    });
+    return {
+      kind: "update_attributes",
+      attributeMask,
+      updatedCount: attributes.length
+    };
+  }
+
+  const existingLinks = await input.runtime.client.listPlaceActionLinks(input.runtime.locationId);
+  const byKey = new Map<string, { name?: string }>();
+  for (const link of existingLinks) {
+    const uri = normalizeHttpUrl(typeof link.uri === "string" ? link.uri : null);
+    const placeActionType = typeof link.placeActionType === "string" ? link.placeActionType.toUpperCase() : null;
+    if (!uri || !placeActionType) {
+      continue;
+    }
+    byKey.set(`${placeActionType}|${uri}`, {
+      name: typeof link.name === "string" ? link.name : undefined
+    });
+  }
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  for (const rawLink of input.operation.links) {
+    const record = asRecord(rawLink);
+    const uri = normalizeHttpUrl(typeof record.uri === "string" ? record.uri : null);
+    const placeActionType = typeof record.placeActionType === "string" ? record.placeActionType.toUpperCase() : "SHOP_ONLINE";
+    const isPreferred = toBoolean(record.isPreferred);
+    if (!uri) {
+      skipped += 1;
+      continue;
+    }
+
+    const key = `${placeActionType}|${uri}`;
+    const existing = byKey.get(key);
+    if (existing?.name) {
+      await input.runtime.client.patchPlaceActionLink(
+        existing.name,
+        {
+          uri,
+          placeActionType,
+          isPreferred
+        },
+        ["uri", "placeActionType", "isPreferred"]
+      );
+      updated += 1;
+      continue;
+    }
+
+    await input.runtime.client.createPlaceActionLink(input.runtime.locationId, {
+      uri,
+      placeActionType,
+      isPreferred
+    });
+    created += 1;
+  }
+
+  return {
+    kind: "upsert_place_action_links",
+    requested: input.operation.links.length,
+    created,
+    updated,
+    skipped
+  };
+}
+
+export async function executeClientGbpOperations(input: {
+  clientId: string;
+  locationName?: string | null;
+  locationId?: string | null;
+  accountName?: string | null;
+  operations: GbpExecutionOperation[];
+}): Promise<{
+  location: { accountName: string; accountId: string; locationName: string; locationId: string; locationTitle: string };
+  operations: Array<Record<string, unknown>>;
+  executedAt: string;
+}> {
+  if (!Array.isArray(input.operations) || input.operations.length === 0) {
+    throw new Error("operations are required for GBP execution");
+  }
+
+  const runtime = await resolveRuntimeContext(input.clientId, {
+    locationName: input.locationName,
+    locationId: input.locationId,
+    accountName: input.accountName
+  });
+
+  const operationResults: Array<Record<string, unknown>> = [];
+  for (const operation of input.operations) {
+    operationResults.push(
+      await executeGbpOperation({
+        runtime,
+        operation
+      })
+    );
+  }
+
+  return {
+    location: {
+      accountName: runtime.accountName,
+      accountId: runtime.accountId,
+      locationName: runtime.locationName,
+      locationId: runtime.locationId,
+      locationTitle: runtime.locationTitle
+    },
+    operations: operationResults,
+    executedAt: new Date().toISOString()
+  };
+}
+
 export async function applyClientGbpPatch(input: {
   clientId: string;
   locationName?: string | null;
@@ -492,31 +703,23 @@ export async function applyClientGbpPatch(input: {
   updateMask: string[];
   executedAt: string;
 }> {
-  const dedupedMask = [...new Set(input.updateMask.map((entry) => entry.trim()).filter(Boolean))];
-  if (!dedupedMask.length) {
-    throw new Error("updateMask is required to apply GBP patch");
-  }
-  if (!input.patch || typeof input.patch !== "object" || Array.isArray(input.patch)) {
-    throw new Error("patch payload must be an object");
-  }
-
-  const runtime = await resolveRuntimeContext(input.clientId, {
+  const execution = await executeClientGbpOperations({
+    clientId: input.clientId,
+    accountName: input.accountName,
     locationName: input.locationName,
     locationId: input.locationId,
-    accountName: input.accountName
+    operations: [
+      {
+        kind: "patch_location",
+        patch: input.patch,
+        updateMask: input.updateMask
+      }
+    ]
   });
 
-  await runtime.client.patchLocation(runtime.locationName, input.patch, dedupedMask);
-
   return {
-    location: {
-      accountName: runtime.accountName,
-      accountId: runtime.accountId,
-      locationName: runtime.locationName,
-      locationId: runtime.locationId,
-      locationTitle: runtime.locationTitle
-    },
-    updateMask: dedupedMask,
-    executedAt: new Date().toISOString()
+    location: execution.location,
+    updateMask: [...new Set(input.updateMask.map((entry) => entry.trim()).filter(Boolean))],
+    executedAt: execution.executedAt
   };
 }

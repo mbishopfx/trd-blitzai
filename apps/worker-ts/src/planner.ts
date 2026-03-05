@@ -53,7 +53,12 @@ export class DefaultBlitzPlanner implements ActionPlanner {
           baseAction("media", "media_upload", "low", {
             objective: "media_derivative_batch_upload",
             batchSize: 12,
-            includeGeoTags: true
+            targetAssets: 50,
+            includeGeoTags: true,
+            includeStories: true,
+            includeVideos: true,
+            includeVirtualTours: true,
+            enableVision: true
           })
         ];
       case "content":

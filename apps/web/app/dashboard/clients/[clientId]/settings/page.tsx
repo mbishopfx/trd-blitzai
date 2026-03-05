@@ -80,6 +80,20 @@ function parseJsonMetadata(raw: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function toInt(value: number, fallback: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
 export default function ClientOrchestrationSettingsPage() {
   const { clientId } = useParams<{ clientId: string }>();
   const { request, buildAuthHeaders } = useDashboardContext();
@@ -95,6 +109,15 @@ export default function ClientOrchestrationSettingsPage() {
   const [postWordCountMin, setPostWordCountMin] = useState(500);
   const [postWordCountMax, setPostWordCountMax] = useState(800);
   const [eeatStructuredSnippetEnabled, setEeatStructuredSnippetEnabled] = useState(true);
+  const [mediaFloodTargetAssets, setMediaFloodTargetAssets] = useState(50);
+  const [mediaFloodBatchSize, setMediaFloodBatchSize] = useState(12);
+  const [mediaFloodCooldownMs, setMediaFloodCooldownMs] = useState(350);
+  const [mediaFloodMaxPerLocation, setMediaFloodMaxPerLocation] = useState(80);
+  const [mediaFloodEnableVision, setMediaFloodEnableVision] = useState(true);
+  const [mediaFloodIncludeGeoTags, setMediaFloodIncludeGeoTags] = useState(true);
+  const [mediaFloodIncludeStories, setMediaFloodIncludeStories] = useState(true);
+  const [mediaFloodIncludeVideos, setMediaFloodIncludeVideos] = useState(true);
+  const [mediaFloodIncludeVirtualTours, setMediaFloodIncludeVirtualTours] = useState(true);
 
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [integrations, setIntegrations] = useState<IntegrationRecord[]>([]);
@@ -136,6 +159,16 @@ export default function ClientOrchestrationSettingsPage() {
         setPostWordCountMin(settings.postWordCountMin);
         setPostWordCountMax(settings.postWordCountMax);
         setEeatStructuredSnippetEnabled(settings.eeatStructuredSnippetEnabled);
+        const mediaFlood = asRecord(asRecord(settings.metadata).mediaFlood);
+        setMediaFloodTargetAssets(toInt(Number(mediaFlood.targetAssets), 50, 5, 150));
+        setMediaFloodBatchSize(toInt(Number(mediaFlood.batchSize), 12, 1, 30));
+        setMediaFloodCooldownMs(toInt(Number(mediaFlood.cooldownMs), 350, 50, 5000));
+        setMediaFloodMaxPerLocation(toInt(Number(mediaFlood.maxPerLocation), 80, 1, 100));
+        setMediaFloodEnableVision(mediaFlood.enableVision !== false);
+        setMediaFloodIncludeGeoTags(mediaFlood.includeGeoTags !== false);
+        setMediaFloodIncludeStories(mediaFlood.includeStories !== false);
+        setMediaFloodIncludeVideos(mediaFlood.includeVideos !== false);
+        setMediaFloodIncludeVirtualTours(mediaFlood.includeVirtualTours !== false);
         setMediaAssets(assetsPayload.assets);
         setIntegrations(integrationsPayload.integrations);
       })
@@ -185,7 +218,18 @@ export default function ClientOrchestrationSettingsPage() {
           postWordCountMax,
           eeatStructuredSnippetEnabled,
           metadata: {
-            updatedFrom: "dashboard-client-orchestration"
+            updatedFrom: "dashboard-client-orchestration",
+            mediaFlood: {
+              targetAssets: toInt(mediaFloodTargetAssets, 50, 5, 150),
+              batchSize: toInt(mediaFloodBatchSize, 12, 1, 30),
+              cooldownMs: toInt(mediaFloodCooldownMs, 350, 50, 5000),
+              maxPerLocation: toInt(mediaFloodMaxPerLocation, 80, 1, 100),
+              enableVision: mediaFloodEnableVision,
+              includeGeoTags: mediaFloodIncludeGeoTags,
+              includeStories: mediaFloodIncludeStories,
+              includeVideos: mediaFloodIncludeVideos,
+              includeVirtualTours: mediaFloodIncludeVirtualTours
+            }
           }
         }
       });
@@ -366,6 +410,7 @@ export default function ClientOrchestrationSettingsPage() {
           <span className={styles.badge}>Post frequency: {postFrequencyPerWeek}/week</span>
           <span className={styles.badge}>Word range: {postWordCountMin}-{postWordCountMax}</span>
           <span className={styles.badge}>EEAT snippets: {eeatStructuredSnippetEnabled ? "Enabled" : "Disabled"}</span>
+          <span className={styles.badge}>Media flood target: {mediaFloodTargetAssets}</span>
           <span className={styles.badge}>Allowed assets: {mediaAssets.filter((asset) => asset.isAllowedForPosts).length}</span>
         </div>
         <div className={styles.inlineActions}>
@@ -490,27 +535,138 @@ export default function ClientOrchestrationSettingsPage() {
             />
           </label>
           <label className={styles.field}>
-            <span className={styles.label}>Optional External Photo URLs (one per line)</span>
+            <span className={styles.label}>Optional External Media URLs (one per line)</span>
             <textarea
               className={styles.textarea}
               value={photoUrlsText}
               onChange={(event) => setPhotoUrlsText(event.target.value)}
-              placeholder={"https://cdn.client.com/image-1.jpg\nhttps://cdn.client.com/image-2.jpg"}
+              placeholder={"https://cdn.client.com/image-1.jpg\nhttps://cdn.client.com/video-1.mp4"}
             />
+          </label>
+          <header className={styles.cardHeader} style={{ marginTop: 16 }}>
+            <h3 className={styles.cardTitle}>Media Flood Controls</h3>
+            <p className={styles.cardHint}>Controls derivative volume, pacing, and computer-vision behavior for media phase runs.</p>
+          </header>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Target Assets</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={5}
+                max={150}
+                value={mediaFloodTargetAssets}
+                onChange={(event) => setMediaFloodTargetAssets(Number(event.target.value))}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Batch Size</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={1}
+                max={30}
+                value={mediaFloodBatchSize}
+                onChange={(event) => setMediaFloodBatchSize(Number(event.target.value))}
+              />
+            </label>
+          </div>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Cooldown (ms)</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={50}
+                max={5000}
+                value={mediaFloodCooldownMs}
+                onChange={(event) => setMediaFloodCooldownMs(Number(event.target.value))}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Max Per Location</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={1}
+                max={100}
+                value={mediaFloodMaxPerLocation}
+                onChange={(event) => setMediaFloodMaxPerLocation(Number(event.target.value))}
+              />
+            </label>
+          </div>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Vision Metadata</span>
+              <select
+                className={styles.select}
+                value={mediaFloodEnableVision ? "enabled" : "disabled"}
+                onChange={(event) => setMediaFloodEnableVision(event.target.value === "enabled")}
+              >
+                <option value="enabled">enabled</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Geo Tags</span>
+              <select
+                className={styles.select}
+                value={mediaFloodIncludeGeoTags ? "enabled" : "disabled"}
+                onChange={(event) => setMediaFloodIncludeGeoTags(event.target.value === "enabled")}
+              >
+                <option value="enabled">enabled</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </label>
+          </div>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Generate Stories</span>
+              <select
+                className={styles.select}
+                value={mediaFloodIncludeStories ? "enabled" : "disabled"}
+                onChange={(event) => setMediaFloodIncludeStories(event.target.value === "enabled")}
+              >
+                <option value="enabled">enabled</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Use Video Assets</span>
+              <select
+                className={styles.select}
+                value={mediaFloodIncludeVideos ? "enabled" : "disabled"}
+                onChange={(event) => setMediaFloodIncludeVideos(event.target.value === "enabled")}
+              >
+                <option value="enabled">enabled</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </label>
+          </div>
+          <label className={styles.field}>
+            <span className={styles.label}>Generate 360/Panorama Variants</span>
+            <select
+              className={styles.select}
+              value={mediaFloodIncludeVirtualTours ? "enabled" : "disabled"}
+              onChange={(event) => setMediaFloodIncludeVirtualTours(event.target.value === "enabled")}
+            >
+              <option value="enabled">enabled</option>
+              <option value="disabled">disabled</option>
+            </select>
           </label>
         </article>
 
         <article className={`${styles.card} ${styles.col12}`}>
           <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Client Photo Bucket</h3>
-            <p className={styles.cardHint}>Upload media and choose what the GBP post worker can use</p>
+            <h3 className={styles.cardTitle}>Client Media Bucket</h3>
+            <p className={styles.cardHint}>Upload photos/videos and choose what the GBP workers can use</p>
           </header>
           <div className={styles.inlineActions}>
             <label className={styles.buttonSecondary}>
-              Upload Photos
+              Upload Media
               <input
                 type="file"
-                accept="image/*"
+                accept="image/*,video/mp4,video/quicktime,video/webm"
                 multiple
                 style={{ display: "none" }}
                 onChange={(event) => void uploadFiles(event.target.files)}
@@ -534,7 +690,21 @@ export default function ClientOrchestrationSettingsPage() {
                   <tr key={asset.id}>
                     <td>
                       {asset.previewUrl ? (
-                        <img src={asset.previewUrl} alt={asset.fileName} style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8 }} />
+                        asset.mimeType?.startsWith("video/") ? (
+                          <video
+                            src={asset.previewUrl}
+                            muted
+                            playsInline
+                            controls={false}
+                            style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8 }}
+                          />
+                        ) : (
+                          <img
+                            src={asset.previewUrl}
+                            alt={asset.fileName}
+                            style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8 }}
+                          />
+                        )
                       ) : (
                         <span className={styles.muted}>No preview</span>
                       )}

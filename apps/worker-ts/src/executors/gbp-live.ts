@@ -1,5 +1,5 @@
 import type { BlitzAction, BlitzRun } from "@trd-aiblitz/domain";
-import { GbpApiClient, refreshAccessToken } from "@trd-aiblitz/integrations-gbp";
+import { GbpApiClient, refreshAccessToken, type GbpAttributeMetadata } from "@trd-aiblitz/integrations-gbp";
 import QRCode from "qrcode";
 import sharp from "sharp";
 import { decryptJsonToken, encryptJsonToken } from "../crypto";
@@ -97,14 +97,46 @@ interface LocationRichSnapshot {
   websiteUri: string | null;
   profileDescription: string | null;
   categories: string[];
+  categoryResourceNames: string[];
   attributes: string[];
   regularHours: Record<string, unknown> | null;
+  specialHours: Record<string, unknown> | null;
   storefrontAddress: Record<string, unknown> | null;
   formattedAddress: string | null;
   geo: GeoPoint | null;
   reviewCount: number;
   averageRating: number;
   postCount30d: number;
+}
+
+interface VisionAssetMetadata {
+  caption: string;
+  altText: string;
+  tags: string[];
+  sceneType: string;
+  qualityScore: number;
+  warning?: string;
+  model?: string | null;
+}
+
+interface MediaFloodUploadCandidate {
+  sourceAssetId: string | null;
+  sourceType: "client_bucket" | "external_url";
+  variantType: "action_shot" | "team_photo" | "story_vertical" | "virtual_tour_360" | "video_story" | "video_original";
+  mediaFormat: "PHOTO" | "VIDEO";
+  mimeType: string;
+  mediaUrl: string;
+  naturalFileName: string;
+  caption: string;
+  altText: string;
+  tags: string[];
+  locationCategory: string;
+  geoTag: {
+    cityState: string | null;
+    lat: number | null;
+    lng: number | null;
+  };
+  storagePath?: string | null;
 }
 
 interface ExecutorOptions {
@@ -322,6 +354,76 @@ function normalizeHttpUrl(value: string | null | undefined): string | null {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function extensionFromMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized.includes("jpeg") || normalized.includes("jpg")) {
+    return "jpg";
+  }
+  if (normalized.includes("png")) {
+    return "png";
+  }
+  if (normalized.includes("webp")) {
+    return "webp";
+  }
+  if (normalized.includes("gif")) {
+    return "gif";
+  }
+  if (normalized.includes("mp4")) {
+    return "mp4";
+  }
+  if (normalized.includes("quicktime") || normalized.includes("mov")) {
+    return "mov";
+  }
+  if (normalized.includes("webm")) {
+    return "webm";
+  }
+  return "bin";
+}
+
+function inferMediaMimeType(input: { fileName?: string | null; mimeType?: string | null; url?: string | null }): string {
+  const explicit = input.mimeType?.trim().toLowerCase();
+  if (explicit) {
+    return explicit;
+  }
+  const probe = `${input.fileName ?? ""} ${input.url ?? ""}`.toLowerCase();
+  if (/\.(jpg|jpeg)(\?|$)/.test(probe)) {
+    return "image/jpeg";
+  }
+  if (/\.(png)(\?|$)/.test(probe)) {
+    return "image/png";
+  }
+  if (/\.(webp)(\?|$)/.test(probe)) {
+    return "image/webp";
+  }
+  if (/\.(gif)(\?|$)/.test(probe)) {
+    return "image/gif";
+  }
+  if (/\.(mp4)(\?|$)/.test(probe)) {
+    return "video/mp4";
+  }
+  if (/\.(mov)(\?|$)/.test(probe)) {
+    return "video/quicktime";
+  }
+  if (/\.(webm)(\?|$)/.test(probe)) {
+    return "video/webm";
+  }
+  return "application/octet-stream";
+}
+
+function isVideoMimeType(mimeType: string): boolean {
+  return mimeType.toLowerCase().startsWith("video/");
+}
+
+function isImageMimeType(mimeType: string): boolean {
+  return mimeType.toLowerCase().startsWith("image/");
+}
+
 function hashStringToNumber(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -334,12 +436,10 @@ function buildFingerprint(input: {
   clientId: string;
   locationName: string;
   objective: string;
-  updateMask: string[];
-  patch: Record<string, unknown>;
+  payload: Record<string, unknown>;
 }): string {
-  const sortedMask = [...input.updateMask].sort();
-  const patchJson = JSON.stringify(input.patch, Object.keys(input.patch).sort());
-  const raw = `${input.clientId}|${input.locationName}|${input.objective}|${sortedMask.join(",")}|${patchJson}`;
+  const payloadJson = JSON.stringify(input.payload);
+  const raw = `${input.clientId}|${input.locationName}|${input.objective}|${payloadJson}`;
   return `${hashStringToNumber(raw)}`;
 }
 
@@ -396,6 +496,20 @@ function categoryLabel(value: unknown): string | null {
     typeof record.name === "string" ? record.name : null
   ].filter((entry): entry is string => Boolean(entry));
   return candidates[0] ? normalizeText(candidates[0]) : null;
+}
+
+function normalizeCategoryResourceName(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.startsWith("categories/")) {
+    return trimmed;
+  }
+  if (trimmed.includes("/")) {
+    return null;
+  }
+  return `categories/${trimmed}`;
 }
 
 function addressFromStorefront(storefront: Record<string, unknown> | null): string | null {
@@ -631,7 +745,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         };
       case "media_upload":
         return {
-          output: await this.executeMediaUpload({ context })
+          output: await this.executeMediaUpload({ action: input.action, context })
         };
       case "post_publish":
         return {
@@ -914,6 +1028,30 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         throw new Error(`HTTP ${response.status} for ${url}`);
       }
       return Buffer.from(await response.arrayBuffer());
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async fetchBinaryWithTimeout(
+    url: string,
+    timeoutMs = 15000
+  ): Promise<{ buffer: Buffer; contentType: string | null }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+      const contentTypeRaw = response.headers.get("content-type");
+      const contentType = contentTypeRaw ? contentTypeRaw.split(";")[0]?.trim().toLowerCase() ?? null : null;
+      return {
+        buffer: Buffer.from(await response.arrayBuffer()),
+        contentType
+      };
     } finally {
       clearTimeout(timer);
     }
@@ -1487,6 +1625,25 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     return [...new Set(labels)];
   }
 
+  private extractLocationCategoryResourceNames(location: Record<string, unknown>): string[] {
+    const rawCategories = Array.isArray(location.categories) ? location.categories : [];
+    const resourceNames = rawCategories
+      .map((entry) => {
+        if (typeof entry === "string") {
+          return normalizeCategoryResourceName(entry);
+        }
+        const record = asRecord(entry);
+        const fromName = typeof record.name === "string" ? normalizeCategoryResourceName(record.name) : null;
+        if (fromName) {
+          return fromName;
+        }
+        const fromCategoryId = typeof record.categoryId === "string" ? normalizeCategoryResourceName(record.categoryId) : null;
+        return fromCategoryId;
+      })
+      .filter((entry): entry is string => Boolean(entry));
+    return [...new Set(resourceNames)];
+  }
+
   private extractLocationAttributes(location: Record<string, unknown>): string[] {
     const rawAttributes = Array.isArray(location.attributes) ? location.attributes : [];
     const labels = rawAttributes
@@ -1519,6 +1676,11 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     return normalizeText(candidates[0]);
   }
 
+  private extractSpecialHours(location: Record<string, unknown>): Record<string, unknown> | null {
+    const specialHours = asRecord(location.specialHours);
+    return Object.keys(specialHours).length ? specialHours : null;
+  }
+
   private extractLocationGeo(location: Record<string, unknown>): GeoPoint | null {
     const latlng = asRecord(location.latlng);
     const latitude = toNumber(latlng.latitude, Number.NaN);
@@ -1541,8 +1703,10 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     locationName: string;
   }): Promise<Record<string, unknown>> {
     const masks = [
-      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,categories,profile,attributes,serviceAreaBusiness",
-      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,categories,profile,serviceAreaBusiness",
+      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,specialHours,categories,profile,attributes,serviceItems,serviceAreaBusiness",
+      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,specialHours,categories,profile,serviceItems,serviceAreaBusiness",
+      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,specialHours,categories,profile,serviceAreaBusiness",
+      "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,specialHours,profile",
       "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours,profile",
       "name,title,storefrontAddress,websiteUri,phoneNumbers,regularHours"
     ];
@@ -1677,8 +1841,10 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         normalizeHttpUrl(input.location.websiteUri),
       profileDescription: this.extractProfileDescription(merged),
       categories: this.extractLocationCategories(merged),
+      categoryResourceNames: this.extractLocationCategoryResourceNames(merged),
       attributes: this.extractLocationAttributes(merged),
       regularHours: Object.keys(asRecord(merged.regularHours)).length ? asRecord(merged.regularHours) : null,
+      specialHours: this.extractSpecialHours(merged),
       storefrontAddress: Object.keys(storefrontAddress).length ? storefrontAddress : null,
       formattedAddress,
       geo: resolvedGeo,
@@ -2007,6 +2173,236 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
   }
 
+  private normalizeMatchKey(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  private scoreAttributeMatch(input: { suggestion: string; displayName: string }): number {
+    const left = this.normalizeMatchKey(input.suggestion);
+    const right = this.normalizeMatchKey(input.displayName);
+    if (!left || !right) {
+      return 0;
+    }
+    if (left === right) {
+      return 100;
+    }
+    if (left.includes(right) || right.includes(left)) {
+      return 80;
+    }
+
+    const leftTokens = new Set(left.split(" ").filter((token) => token.length >= 3));
+    const rightTokens = new Set(right.split(" ").filter((token) => token.length >= 3));
+    if (!leftTokens.size || !rightTokens.size) {
+      return 0;
+    }
+
+    let overlap = 0;
+    for (const token of leftTokens) {
+      if (rightTokens.has(token)) {
+        overlap += 1;
+      }
+    }
+    const denominator = Math.max(leftTokens.size, rightTokens.size);
+    return Math.round((overlap / denominator) * 100);
+  }
+
+  private buildBoolAttributeUpdates(input: {
+    suggestedAttributes: string[];
+    metadata: GbpAttributeMetadata[];
+    maxUpdates?: number;
+  }): {
+    attributes: Array<Record<string, unknown>>;
+    attributeMask: string[];
+    unresolved: string[];
+  } {
+    const maxUpdates = clamp(toNumber(input.maxUpdates, 6), 1, 25);
+    const boolMetadata = input.metadata
+      .map((entry) => ({
+        parent: typeof entry.parent === "string" ? entry.parent.trim() : "",
+        displayName: typeof entry.displayName === "string" ? entry.displayName.trim() : "",
+        valueType: typeof entry.valueType === "string" ? entry.valueType : "",
+        deprecated: entry.deprecated === true
+      }))
+      .filter((entry) => entry.parent && entry.displayName && entry.valueType === "BOOL" && !entry.deprecated);
+
+    const usedParents = new Set<string>();
+    const attributes: Array<Record<string, unknown>> = [];
+    const attributeMask: string[] = [];
+    const unresolved: string[] = [];
+
+    for (const suggestionRaw of input.suggestedAttributes) {
+      const suggestion = suggestionRaw.trim();
+      if (!suggestion) {
+        continue;
+      }
+
+      let best: { parent: string; displayName: string; score: number } | null = null;
+      for (const candidate of boolMetadata) {
+        if (usedParents.has(candidate.parent)) {
+          continue;
+        }
+        const score = this.scoreAttributeMatch({
+          suggestion,
+          displayName: candidate.displayName
+        });
+        if (!best || score > best.score) {
+          best = {
+            parent: candidate.parent,
+            displayName: candidate.displayName,
+            score
+          };
+        }
+      }
+
+      if (!best || best.score < 60) {
+        unresolved.push(suggestion);
+        continue;
+      }
+
+      usedParents.add(best.parent);
+      attributes.push({
+        name: best.parent,
+        values: [true]
+      });
+      attributeMask.push(best.parent);
+
+      if (attributes.length >= maxUpdates) {
+        break;
+      }
+    }
+
+    return {
+      attributes,
+      attributeMask: [...new Set(attributeMask)],
+      unresolved
+    };
+  }
+
+  private normalizeSpecialHoursPayload(value: unknown): Record<string, unknown> | null {
+    const record = asRecord(value);
+    const fromRecord = Array.isArray(record.specialHourPeriods) ? record.specialHourPeriods : null;
+    const fromArray = Array.isArray(value) ? value : null;
+    const periods = (fromRecord ?? fromArray ?? [])
+      .map((entry) => asRecord(entry))
+      .filter((entry) => Object.keys(entry).length > 0)
+      .slice(0, 60);
+    if (!periods.length) {
+      return null;
+    }
+    return {
+      specialHourPeriods: periods
+    };
+  }
+
+  private buildServiceItemsForPatch(input: {
+    categoryResourceName: string | null;
+    suggestedServices: string[];
+    suggestedProducts: string[];
+  }): Array<Record<string, unknown>> {
+    if (!input.categoryResourceName) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    const serviceItems: Array<Record<string, unknown>> = [];
+    for (const labelRaw of [...input.suggestedServices, ...input.suggestedProducts]) {
+      const label = normalizeText(labelRaw).slice(0, 140);
+      if (!label) {
+        continue;
+      }
+      const key = label.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      serviceItems.push({
+        freeFormServiceItem: {
+          category: input.categoryResourceName,
+          label: {
+            displayName: label,
+            languageCode: "en-US"
+          }
+        }
+      });
+      if (serviceItems.length >= 30) {
+        break;
+      }
+    }
+    return serviceItems;
+  }
+
+  private selectProductLandingUrls(input: {
+    sitemapUrls: string[];
+    fallbackWebsite: string | null;
+    suggestedProducts: string[];
+  }): string[] {
+    const results: string[] = [];
+    const seen = new Set<string>();
+    const lowerSitemap = input.sitemapUrls.map((url) => ({ url, lower: url.toLowerCase() }));
+    const push = (value: string | null | undefined) => {
+      const normalized = normalizeHttpUrl(value ?? null);
+      if (!normalized || seen.has(normalized)) {
+        return;
+      }
+      seen.add(normalized);
+      results.push(normalized);
+    };
+
+    for (const suggestion of input.suggestedProducts) {
+      const tokens = this.normalizeMatchKey(suggestion)
+        .split(" ")
+        .filter((token) => token.length >= 4);
+      if (!tokens.length) {
+        continue;
+      }
+      const matched = lowerSitemap.find((entry) => tokens.some((token) => entry.lower.includes(token)));
+      if (matched) {
+        push(matched.url);
+      }
+      if (results.length >= 4) {
+        break;
+      }
+    }
+
+    if (results.length < 4) {
+      for (const candidate of lowerSitemap) {
+        if (/(product|shop|service|offer|menu|book)/.test(candidate.lower)) {
+          push(candidate.url);
+        }
+        if (results.length >= 4) {
+          break;
+        }
+      }
+    }
+
+    if (results.length < 4 && input.sitemapUrls.length) {
+      push(input.sitemapUrls[0]);
+    }
+
+    if (results.length < 4) {
+      push(input.fallbackWebsite);
+    }
+
+    return results.slice(0, 4);
+  }
+
+  private buildProductPlaceActionLinks(input: {
+    sitemapUrls: string[];
+    fallbackWebsite: string | null;
+    suggestedProducts: string[];
+  }): Array<Record<string, unknown>> {
+    const selectedUrls = this.selectProductLandingUrls({
+      sitemapUrls: input.sitemapUrls,
+      fallbackWebsite: input.fallbackWebsite,
+      suggestedProducts: input.suggestedProducts
+    });
+    return selectedUrls.map((uri, index) => ({
+      uri,
+      placeActionType: "SHOP_ONLINE",
+      isPreferred: index === 0
+    }));
+  }
+
   private async runCompetitorBenchmark(input: {
     context: RunContext;
   }): Promise<Array<Record<string, unknown>>> {
@@ -2038,6 +2434,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
       if (!snapshot.regularHours) {
         missing.push("regularHours");
+      }
+      if (!snapshot.specialHours) {
+        missing.push("specialHours");
       }
       if (!snapshot.attributes.length) {
         missing.push("attributes");
@@ -2077,17 +2476,31 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     description: string;
     patch: Record<string, unknown>;
     updateMask: string[];
+    operations?: Array<Record<string, unknown>>;
     objective: string;
     actionType?: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
     riskTier?: "low" | "medium" | "high" | "critical";
     metadata?: Record<string, unknown>;
   }): Promise<string> {
+    const operationPlan = input.operations?.length
+      ? input.operations
+      : [
+          {
+            kind: "patch_location",
+            patch: input.patch,
+            updateMask: input.updateMask
+          }
+        ];
     const payload: Record<string, unknown> = {
       objective: input.objective,
       locationName: input.location.locationName,
       locationId: input.location.locationId,
       patch: input.patch,
       updateMask: input.updateMask,
+      executionPlan: {
+        version: 1,
+        operations: operationPlan
+      },
       ...(input.metadata ?? {})
     };
 
@@ -2095,8 +2508,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       clientId: input.clientId,
       locationName: input.location.locationName,
       objective: input.objective,
-      updateMask: input.updateMask,
-      patch: input.patch
+      payload
     });
 
     const created = await this.deps.repository.createActionNeeded({
@@ -2344,6 +2756,15 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       const explicitHours = asRecord(input.action.payload.defaultRegularHours);
       const metadataHours = asRecord(asRecord(input.context.settings.metadata).defaultRegularHours);
       const defaultHours = Object.keys(explicitHours).length ? explicitHours : metadataHours;
+      const explicitSpecialHours = this.normalizeSpecialHoursPayload(input.action.payload.defaultSpecialHours);
+      const metadataSpecialHours = this.normalizeSpecialHoursPayload(asRecord(input.context.settings.metadata).defaultSpecialHours);
+      const defaultSpecialHours = explicitSpecialHours ?? metadataSpecialHours;
+      const sitemapUrls = await this.loadSitemapUrls(input.context.settings.sitemapUrl);
+      if (normalizeHttpUrl(input.context.settings.sitemapUrl) && sitemapUrls.length === 0) {
+        input.context.warnings.push(
+          "Configured sitemap URL did not return usable page URLs for products link upserts."
+        );
+      }
 
       const patched: Array<Record<string, unknown>> = [];
       const queued: Array<Record<string, unknown>> = [];
@@ -2372,6 +2793,17 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         const patch: Record<string, unknown> = {};
         const updateMask: string[] = [];
         const unavailableWrites: string[] = [];
+        let attributeOperations: {
+          attributes: Array<Record<string, unknown>>;
+          attributeMask: string[];
+          unresolved: string[];
+        } = {
+          attributes: [],
+          attributeMask: [],
+          unresolved: []
+        };
+        let attributeMetadataCount = 0;
+        let productLinks: Array<Record<string, unknown>> = [];
 
         const profileDescription = suggestions.profileDescription ? suggestions.profileDescription.trim() : "";
         if (profileDescription) {
@@ -2403,34 +2835,114 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           updateMask.push("regularHours");
         }
 
+        if (!snapshot.specialHours && defaultSpecialHours) {
+          patch.specialHours = defaultSpecialHours;
+          updateMask.push("specialHours");
+        }
+
+        const categoryResourceName = snapshot.categoryResourceNames[0] ?? null;
+        const serviceItems = this.buildServiceItemsForPatch({
+          categoryResourceName,
+          suggestedServices: suggestions.suggestedServices,
+          suggestedProducts: suggestions.suggestedProducts
+        });
+        if (serviceItems.length) {
+          patch.serviceItems = serviceItems;
+          updateMask.push("serviceItems");
+        } else if (suggestions.suggestedServices.length > 0 || suggestions.suggestedProducts.length > 0) {
+          unavailableWrites.push(
+            categoryResourceName ? "serviceItems_not_generated" : "serviceItems_missing_category_resource_name"
+          );
+        }
+
         if (suggestions.suggestedAttributes.length > 0) {
-          unavailableWrites.push("attributes");
+          try {
+            const metadata = await input.context.client.listAttributeMetadata({
+              parentLocationName: location.locationName,
+              languageCode: "en",
+              pageSize: 200
+            });
+            attributeMetadataCount = metadata.length;
+            attributeOperations = this.buildBoolAttributeUpdates({
+              suggestedAttributes: suggestions.suggestedAttributes,
+              metadata,
+              maxUpdates: 8
+            });
+            if (!attributeOperations.attributeMask.length) {
+              unavailableWrites.push("attributes_no_safe_bool_match");
+            } else if (attributeOperations.unresolved.length) {
+              unavailableWrites.push("attributes_partial_match");
+            }
+          } catch (error) {
+            unavailableWrites.push("attributes_metadata_unavailable");
+            warnings.push(
+              `${location.locationName}: failed to resolve attribute metadata (${error instanceof Error ? error.message : String(error)})`
+            );
+          }
         }
-        if (suggestions.suggestedServices.length > 0) {
-          unavailableWrites.push("services");
-        }
+
         if (suggestions.suggestedProducts.length > 0) {
-          unavailableWrites.push("products");
+          const fallbackWebsite =
+            normalizeHttpUrl(snapshot.websiteUri) ??
+            normalizeHttpUrl(location.websiteUri) ??
+            normalizeHttpUrl(input.context.settings.defaultPostUrl);
+          productLinks = this.buildProductPlaceActionLinks({
+            sitemapUrls,
+            fallbackWebsite,
+            suggestedProducts: suggestions.suggestedProducts
+          });
+          if (!productLinks.length) {
+            unavailableWrites.push("product_links_missing_urls");
+          }
+        }
+
+        if (suggestions.suggestedAttributes.length > 0) {
+          if (attributeOperations.unresolved.length) {
+            unavailableWrites.push("attributes_unresolved_suggestions");
+          }
         }
         if (suggestions.qaPairs.length > 0) {
           unavailableWrites.push("q_and_a");
+        }
+
+        const dedupedMask = [...new Set(updateMask)];
+        const operations: Array<Record<string, unknown>> = [];
+        if (dedupedMask.length) {
+          operations.push({
+            kind: "patch_location",
+            patch,
+            updateMask: dedupedMask
+          });
+        }
+        if (attributeOperations.attributeMask.length) {
+          operations.push({
+            kind: "update_attributes",
+            attributes: attributeOperations.attributes,
+            attributeMask: attributeOperations.attributeMask
+          });
+        }
+        if (productLinks.length) {
+          operations.push({
+            kind: "upsert_place_action_links",
+            links: productLinks
+          });
         }
 
         if (!applyRecommendations) {
           skipped.push({
             locationName: location.locationName,
             reason: "apply_recommendations_disabled",
-            suggestedUpdateMask: [...new Set(updateMask)],
+            suggestedUpdateMask: dedupedMask,
+            operationKinds: operations.map((entry) => String(entry.kind ?? "unknown")),
             unavailableWrites
           });
           continue;
         }
 
-        const dedupedMask = [...new Set(updateMask)];
-        if (!dedupedMask.length) {
+        if (!operations.length) {
           skipped.push({
             locationName: location.locationName,
-            reason: "no_mutable_fields_needed",
+            reason: "no_mutable_operations_needed",
             unavailableWrites
           });
           continue;
@@ -2447,12 +2959,15 @@ export class GbpLiveActionExecutor implements ActionExecutor {
               actionType: "attribute_update",
               title: "Approve GBP completeness auto-fill patch",
               description:
-                "Worker prepared GBP profile/category/hours/website updates. Approve to apply this patch, or complete manually and mark done.",
+                "Worker prepared GBP completeness updates (profile/category/hours/services/special hours/attributes/product links). Approve to execute or complete manually.",
               patch,
               updateMask: dedupedMask,
+              operations,
               riskTier: "high",
               metadata: {
                 unavailableWrites,
+                attributeMetadataCount,
+                operationKinds: operations.map((entry) => String(entry.kind ?? "unknown")),
                 suggestions: {
                   usps: suggestions.usps,
                   categories: suggestions.suggestedCategories,
@@ -2461,6 +2976,12 @@ export class GbpLiveActionExecutor implements ActionExecutor {
                   attributes: suggestions.suggestedAttributes,
                   hoursRecommendations: suggestions.hoursRecommendations,
                   qaPairs: suggestions.qaPairs
+                },
+                derived: {
+                  attributeMask: attributeOperations.attributeMask,
+                  unresolvedAttributes: attributeOperations.unresolved,
+                  serviceItemsCount: serviceItems.length,
+                  productLinksCount: productLinks.length
                 }
               }
             });
@@ -2468,7 +2989,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
               actionNeededId,
               locationName: location.locationName,
               title: snapshot.title ?? location.title,
-              updateMask: dedupedMask
+              updateMask: dedupedMask,
+              operationKinds: operations.map((entry) => String(entry.kind ?? "unknown"))
             });
           } catch (error) {
             failed.push({
@@ -2482,11 +3004,89 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         }
 
         try {
-          await input.context.client.patchLocation(location.locationName, patch, dedupedMask);
+          const executedOperations: Array<Record<string, unknown>> = [];
+          if (dedupedMask.length) {
+            await input.context.client.patchLocation(location.locationName, patch, dedupedMask);
+            executedOperations.push({
+              kind: "patch_location",
+              updateMask: dedupedMask
+            });
+          }
+          if (attributeOperations.attributeMask.length) {
+            await input.context.client.updateLocationAttributes({
+              locationName: location.locationName,
+              attributes: attributeOperations.attributes,
+              attributeMask: attributeOperations.attributeMask
+            });
+            executedOperations.push({
+              kind: "update_attributes",
+              attributeMask: attributeOperations.attributeMask,
+              updatedCount: attributeOperations.attributes.length
+            });
+          }
+          if (productLinks.length) {
+            const existingLinks = await input.context.client.listPlaceActionLinks(location.locationId);
+            const existingByKey = new Map<string, { name?: string }>();
+            for (const link of existingLinks) {
+              const uri = normalizeHttpUrl(typeof link.uri === "string" ? link.uri : null);
+              const placeActionType = typeof link.placeActionType === "string" ? link.placeActionType.toUpperCase() : null;
+              if (!uri || !placeActionType) {
+                continue;
+              }
+              existingByKey.set(`${placeActionType}|${uri}`, { name: link.name });
+            }
+
+            let created = 0;
+            let updated = 0;
+            let skippedProductLinks = 0;
+            for (const rawLink of productLinks) {
+              const record = asRecord(rawLink);
+              const uri = normalizeHttpUrl(typeof record.uri === "string" ? record.uri : null);
+              const placeActionTypeRaw =
+                typeof record.placeActionType === "string" ? record.placeActionType.toUpperCase() : "SHOP_ONLINE";
+              const isPreferred = record.isPreferred === true;
+              if (!uri) {
+                skippedProductLinks += 1;
+                continue;
+              }
+              const key = `${placeActionTypeRaw}|${uri}`;
+              const existing = existingByKey.get(key);
+              if (existing?.name) {
+                await input.context.client.patchPlaceActionLink(
+                  existing.name,
+                  {
+                    uri,
+                    placeActionType: placeActionTypeRaw,
+                    isPreferred
+                  },
+                  ["uri", "placeActionType", "isPreferred"]
+                );
+                updated += 1;
+                continue;
+              }
+
+              await input.context.client.createPlaceActionLink(location.locationId, {
+                uri,
+                placeActionType: placeActionTypeRaw,
+                isPreferred
+              });
+              created += 1;
+            }
+
+            executedOperations.push({
+              kind: "upsert_place_action_links",
+              requested: productLinks.length,
+              created,
+              updated,
+              skipped: skippedProductLinks
+            });
+          }
+
           patched.push({
             locationName: location.locationName,
             title: snapshot.title ?? location.title,
             updateMask: dedupedMask,
+            operations: executedOperations,
             unavailableWrites,
             suggestions: {
               usps: suggestions.usps,
@@ -2534,6 +3134,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         if (!snapshot.regularHours) {
           missing.push("regularHours");
         }
+        if (!snapshot.specialHours) {
+          missing.push("specialHours");
+        }
         if (!snapshot.attributes.length) {
           missing.push("attributes");
         }
@@ -2563,13 +3166,1040 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     };
   }
 
-  private async executeMediaUpload(input: { context: RunContext }): Promise<Record<string, unknown>> {
+  private buildMediaFloodNaturalFileName(input: {
+    locationTitle: string;
+    cityState: string | null;
+    variantType: MediaFloodUploadCandidate["variantType"];
+    ordinal: number;
+    extension: string;
+  }): string {
+    const businessSlug = sanitizeStorageSegment(input.locationTitle.toLowerCase()).slice(0, 42) || "business";
+    const citySlug = sanitizeStorageSegment((input.cityState ?? "local").toLowerCase()).slice(0, 26) || "local";
+    const variantSlug = sanitizeStorageSegment(input.variantType.toLowerCase()).slice(0, 28) || "media";
+    const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    return `${businessSlug}-${citySlug}-${variantSlug}-${dateStamp}-${String(input.ordinal).padStart(3, "0")}.${input.extension}`;
+  }
+
+  private mediaCategoryForVariant(
+    variantType: MediaFloodUploadCandidate["variantType"],
+    mediaFormat: MediaFloodUploadCandidate["mediaFormat"]
+  ): string {
+    if (mediaFormat === "VIDEO") {
+      return "ADDITIONAL";
+    }
+    switch (variantType) {
+      case "action_shot":
+        return "AT_WORK";
+      case "team_photo":
+        return "TEAM";
+      case "story_vertical":
+        return "ADDITIONAL";
+      case "virtual_tour_360":
+        return "INTERIOR";
+      default:
+        return "ADDITIONAL";
+    }
+  }
+
+  private buildFallbackVisionMetadata(input: {
+    locationTitle: string;
+    variantType: MediaFloodUploadCandidate["variantType"];
+    cityState: string | null;
+    tags?: string[];
+  }): VisionAssetMetadata {
+    const readableVariant = input.variantType.replace(/_/g, " ");
+    const cityLine = input.cityState ? ` in ${input.cityState}` : "";
+    const caption = `${input.locationTitle} ${readableVariant} update${cityLine}.`.slice(0, 280);
     return {
-      objective: "media_derivative_batch_upload",
-      uploaded: 0,
-      status: "no_media_assets_supplied",
-      guidance: "Provide approved media asset URLs in action payload to activate live media uploads.",
-      locationCount: input.context.locations.length
+      caption,
+      altText: `${input.locationTitle} ${readableVariant} visual`,
+      tags: [...new Set(["gbp", "local", input.variantType, ...(input.tags ?? [])])].slice(0, 14),
+      sceneType: input.variantType,
+      qualityScore: 72
+    };
+  }
+
+  private async generateVisionMetadataForImage(input: {
+    imageBuffer: Buffer;
+    mimeType: string;
+    locationTitle: string;
+    variantType: MediaFloodUploadCandidate["variantType"];
+    objectives: string[];
+    cityState: string | null;
+    fallbackTags?: string[];
+    enableVision: boolean;
+  }): Promise<VisionAssetMetadata> {
+    const fallback = this.buildFallbackVisionMetadata({
+      locationTitle: input.locationTitle,
+      variantType: input.variantType,
+      cityState: input.cityState,
+      tags: input.fallbackTags
+    });
+
+    if (!input.enableVision) {
+      return {
+        ...fallback,
+        warning: "Vision analysis disabled for this run.",
+        model: null
+      };
+    }
+
+    const apiKey =
+      process.env.GEMINI_API_KEY?.trim() ??
+      process.env.GOOGLE_AI_STUDIO_API_KEY?.trim() ??
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ??
+      process.env.GOOGLE_API_KEY?.trim() ??
+      null;
+    const model = process.env.GEMINI_VISION_MODEL?.trim() || process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
+    if (!apiKey) {
+      return {
+        ...fallback,
+        warning: "Gemini API key not configured; media captions generated from fallback rules.",
+        model: null
+      };
+    }
+
+    const objectiveLine = input.objectives.length ? input.objectives.join("; ") : "Increase local visibility and conversions";
+    const prompt = [
+      "You are a local SEO media optimizer for Google Business Profile.",
+      "Analyze the attached media and produce concise, factual metadata.",
+      "",
+      "Return STRICT JSON only:",
+      "{",
+      '  "caption": "string",',
+      '  "altText": "string",',
+      '  "tags": ["string"],',
+      '  "sceneType": "string",',
+      '  "qualityScore": 0',
+      "}",
+      "",
+      "Rules:",
+      "- caption max 220 chars; human and specific; no hype.",
+      "- altText max 140 chars.",
+      "- tags 4-12 short lowercase tags.",
+      "- qualityScore integer 0-100.",
+      "- Avoid unverifiable claims.",
+      "",
+      `Business: ${input.locationTitle}`,
+      `Variant Type: ${input.variantType}`,
+      `City/State: ${input.cityState ?? "local area"}`,
+      `Objectives: ${objectiveLine}`,
+      "Return JSON only."
+    ].join("\n");
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      mimeType: input.mimeType || "image/jpeg",
+                      data: input.imageBuffer.toString("base64")
+                    }
+                  }
+                ]
+              }
+            ],
+            generationConfig: {
+              temperature: 0.35,
+              topP: 0.9,
+              maxOutputTokens: 380
+            }
+          })
+        }
+      );
+
+      if (!response.ok) {
+        return {
+          ...fallback,
+          warning: `Gemini vision API returned ${response.status}; fallback metadata applied.`,
+          model
+        };
+      }
+
+      const payload = (await response.json()) as {
+        candidates?: Array<{
+          content?: { parts?: Array<{ text?: string }> };
+        }>;
+      };
+      const rawText = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("\n") ?? "";
+      const parsed = parseJsonObjectFromText(rawText);
+      if (!parsed) {
+        return {
+          ...fallback,
+          warning: "Gemini vision output did not parse as JSON; fallback metadata applied.",
+          model
+        };
+      }
+
+      const caption =
+        typeof parsed.caption === "string" && parsed.caption.trim() ? normalizeText(parsed.caption).slice(0, 220) : fallback.caption;
+      const altText =
+        typeof parsed.altText === "string" && parsed.altText.trim()
+          ? normalizeText(parsed.altText).slice(0, 140)
+          : fallback.altText;
+      const tags = [...new Set(toStringArray(parsed.tags).map((tag) => tag.toLowerCase()).slice(0, 14))];
+      const sceneType = typeof parsed.sceneType === "string" && parsed.sceneType.trim() ? parsed.sceneType.trim() : fallback.sceneType;
+      const qualityScore = clamp(Math.round(toNumber(parsed.qualityScore, fallback.qualityScore)), 0, 100);
+
+      return {
+        caption,
+        altText,
+        tags: tags.length ? tags : fallback.tags,
+        sceneType,
+        qualityScore,
+        model
+      };
+    } catch (error) {
+      return {
+        ...fallback,
+        warning: error instanceof Error ? error.message : String(error),
+        model
+      };
+    }
+  }
+
+  private async renderEnhancedVariantBuffer(input: {
+    sourceBuffer: Buffer;
+    variantType: MediaFloodUploadCandidate["variantType"];
+  }): Promise<{
+    buffer: Buffer;
+    mimeType: "image/jpeg";
+    width: number;
+    height: number;
+    isPanoramaSource: boolean;
+  }> {
+    const base = sharp(input.sourceBuffer, { failOn: "none" }).rotate();
+    const metadata = await base.metadata();
+    const sourceWidth = metadata.width ?? 0;
+    const sourceHeight = metadata.height ?? 0;
+    if (!sourceWidth || !sourceHeight) {
+      throw new Error("Source image dimensions are invalid for media derivative generation.");
+    }
+    const isPanoramaSource = sourceWidth / Math.max(sourceHeight, 1) >= 1.8;
+
+    let targetWidth = 1600;
+    let targetHeight = 1200;
+    switch (input.variantType) {
+      case "team_photo":
+        targetWidth = 1200;
+        targetHeight = 1200;
+        break;
+      case "story_vertical":
+        targetWidth = 1080;
+        targetHeight = 1920;
+        break;
+      case "virtual_tour_360":
+        targetWidth = 2048;
+        targetHeight = 1024;
+        break;
+      default:
+        targetWidth = 1600;
+        targetHeight = 1200;
+        break;
+    }
+
+    const buffer = await sharp(input.sourceBuffer, { failOn: "none" })
+      .rotate()
+      .resize({
+        width: targetWidth,
+        height: targetHeight,
+        fit: "cover",
+        position: input.variantType === "story_vertical" ? "attention" : "center"
+      })
+      .modulate({
+        saturation: 1.06,
+        brightness: 1.03
+      })
+      .sharpen({
+        sigma: 0.8
+      })
+      .withMetadata()
+      .jpeg({
+        quality: 86,
+        mozjpeg: true,
+        chromaSubsampling: "4:4:4"
+      })
+      .toBuffer();
+
+    return {
+      buffer,
+      mimeType: "image/jpeg",
+      width: targetWidth,
+      height: targetHeight,
+      isPanoramaSource
+    };
+  }
+
+  private resolveMediaFloodStorageBucket(input: {
+    context: RunContext;
+    payload: Record<string, unknown>;
+    settingsMetadata: Record<string, unknown>;
+    mediaFloodMetadata: Record<string, unknown>;
+  }): string | null {
+    const fromPayload = typeof input.payload.storageBucket === "string" ? input.payload.storageBucket.trim() : "";
+    if (fromPayload) {
+      return fromPayload;
+    }
+    const fromMediaMeta =
+      typeof input.mediaFloodMetadata.storageBucket === "string" ? input.mediaFloodMetadata.storageBucket.trim() : "";
+    if (fromMediaMeta) {
+      return fromMediaMeta;
+    }
+    const fromSettingsMeta =
+      typeof input.settingsMetadata.mediaFloodStorageBucket === "string"
+        ? input.settingsMetadata.mediaFloodStorageBucket.trim()
+        : "";
+    if (fromSettingsMeta) {
+      return fromSettingsMeta;
+    }
+    return input.context.mediaAssets[0]?.storageBucket ?? null;
+  }
+
+  private async uploadProcessedMediaVariant(input: {
+    bucket: string;
+    clientId: string;
+    actionId: string;
+    locationId: string;
+    naturalFileName: string;
+    buffer: Buffer;
+    mimeType: string;
+  }): Promise<{ mediaUrl: string; storagePath: string }> {
+    if (!isSupabaseConfigured()) {
+      throw new Error("Supabase is not configured for processed media uploads");
+    }
+
+    const supabase = getSupabaseServiceClient();
+    const ext = extensionFromMimeType(input.mimeType);
+    const baseName = sanitizeStorageSegment(input.naturalFileName.replace(/\.[a-z0-9]+$/i, ""));
+    const fileName = `${baseName || "media"}-${Date.now()}.${ext}`;
+    const day = new Date().toISOString().slice(0, 10);
+    const storagePath = [
+      "processed",
+      "media-flood",
+      day,
+      sanitizeStorageSegment(input.clientId),
+      sanitizeStorageSegment(input.locationId),
+      sanitizeStorageSegment(input.actionId),
+      fileName
+    ]
+      .filter(Boolean)
+      .join("/");
+
+    const { error: uploadError } = await supabase.storage.from(input.bucket).upload(storagePath, input.buffer, {
+      contentType: input.mimeType,
+      cacheControl: "3600",
+      upsert: false
+    });
+    if (uploadError) {
+      throw new Error(uploadError.message);
+    }
+
+    const { data: signed, error: signedError } = await supabase.storage.from(input.bucket).createSignedUrl(storagePath, 60 * 60 * 24 * 14);
+    if (signedError || !signed?.signedUrl) {
+      throw new Error(signedError?.message ?? "Unable to create signed URL for processed media.");
+    }
+
+    const mediaUrl = normalizeHttpUrl(signed.signedUrl);
+    if (!mediaUrl) {
+      throw new Error("Generated signed URL for processed media is invalid.");
+    }
+
+    return {
+      mediaUrl,
+      storagePath
+    };
+  }
+
+  private async executeMediaUpload(input: {
+    action: BlitzAction;
+    context: RunContext;
+  }): Promise<Record<string, unknown>> {
+    const objective =
+      typeof input.action.payload.objective === "string" ? input.action.payload.objective : "media_derivative_batch_upload";
+    const settingsMetadata = asRecord(input.context.settings.metadata);
+    const mediaFloodMetadata = asRecord(settingsMetadata.mediaFlood);
+
+    const selectedAssetIds = new Set(input.context.settings.photoAssetIds);
+    const allowedAssets = input.context.mediaAssets.filter((asset) => {
+      if (!asset.isAllowedForPosts) {
+        return false;
+      }
+      if (selectedAssetIds.size > 0 && !selectedAssetIds.has(asset.id)) {
+        return false;
+      }
+      return true;
+    });
+    const externalUrls = [...new Set(
+      [...input.context.settings.photoAssetUrls, ...toStringArray(input.action.payload.mediaUrls)]
+        .map((value) => normalizeHttpUrl(value))
+        .filter((value): value is string => Boolean(value))
+    )];
+
+    if (!allowedAssets.length && !externalUrls.length) {
+      throw new Error(
+        "No media sources found. Upload client media assets or supply external media URLs before running media flood."
+      );
+    }
+
+    const resolveBoolean = (value: unknown, fallback: boolean): boolean =>
+      typeof value === "boolean" ? value : fallback;
+
+    const targetAssets = clamp(
+      Math.round(
+        toNumber(
+          input.action.payload.targetAssets,
+          toNumber(mediaFloodMetadata.targetAssets, toNumber(settingsMetadata.mediaFloodTargetAssets, 50))
+        )
+      ),
+      5,
+      150
+    );
+    const batchSize = clamp(
+      Math.round(toNumber(input.action.payload.batchSize, toNumber(mediaFloodMetadata.batchSize, 12))),
+      1,
+      30
+    );
+    const cooldownMs = clamp(
+      Math.round(toNumber(input.action.payload.cooldownMs, toNumber(mediaFloodMetadata.cooldownMs, 350))),
+      50,
+      5000
+    );
+    const maxPerLocation = clamp(
+      Math.round(toNumber(input.action.payload.maxPerLocation, toNumber(mediaFloodMetadata.maxPerLocation, 80))),
+      1,
+      100
+    );
+    const includeGeoTags = resolveBoolean(input.action.payload.includeGeoTags, resolveBoolean(mediaFloodMetadata.includeGeoTags, true));
+    const includeStories = resolveBoolean(input.action.payload.includeStories, resolveBoolean(mediaFloodMetadata.includeStories, true));
+    const includeVideos = resolveBoolean(input.action.payload.includeVideos, resolveBoolean(mediaFloodMetadata.includeVideos, true));
+    const includeVirtualTours = resolveBoolean(
+      input.action.payload.includeVirtualTours,
+      resolveBoolean(mediaFloodMetadata.includeVirtualTours, true)
+    );
+    const enableVision = resolveBoolean(input.action.payload.enableVision, resolveBoolean(mediaFloodMetadata.enableVision, true));
+    const storageBucket = this.resolveMediaFloodStorageBucket({
+      context: input.context,
+      payload: input.action.payload,
+      settingsMetadata,
+      mediaFloodMetadata
+    });
+
+    const warnings = [...input.context.warnings];
+    if (!storageBucket) {
+      warnings.push(
+        "No storage bucket configured for media derivatives. Media flood will use direct source URLs only and skip generated variants."
+      );
+    }
+
+    const snapshots = new Map<string, LocationRichSnapshot>();
+    for (const location of input.context.locations) {
+      try {
+        const snapshot = await this.fetchLocationSnapshot({
+          context: input.context,
+          location
+        });
+        snapshots.set(location.locationName, snapshot);
+      } catch (error) {
+        warnings.push(
+          `${location.locationName}: failed to load location snapshot for media geo-tagging (${error instanceof Error ? error.message : String(error)})`
+        );
+      }
+    }
+    const firstLocation = input.context.locations[0];
+    const firstSnapshot = firstLocation ? snapshots.get(firstLocation.locationName) : null;
+    const firstCityState = firstSnapshot ? formatCityState(firstSnapshot.storefrontAddress) : null;
+    const firstTitle = firstSnapshot?.title ?? firstLocation?.title ?? "Local Business";
+
+    const poolLimit = clamp(targetAssets * 3, 20, 300);
+    const candidates: MediaFloodUploadCandidate[] = [];
+    const sourceFailures: Array<Record<string, unknown>> = [];
+
+    for (const asset of allowedAssets) {
+      if (candidates.length >= poolLimit) {
+        break;
+      }
+
+      const detectedMime = inferMediaMimeType({
+        fileName: asset.fileName,
+        mimeType: asset.mimeType,
+        url: mediaUrlFromAsset(asset)
+      });
+
+      if (isVideoMimeType(detectedMime)) {
+        if (!includeVideos) {
+          continue;
+        }
+        const directUrl = await this.resolveDirectAssetMediaUrl(asset);
+        if (!directUrl) {
+          sourceFailures.push({
+            sourceType: "client_bucket",
+            sourceAssetId: asset.id,
+            fileName: asset.fileName,
+            error: "Unable to resolve direct media URL for video asset."
+          });
+          continue;
+        }
+
+        const fallback = this.buildFallbackVisionMetadata({
+          locationTitle: firstTitle,
+          variantType: "video_original",
+          cityState: firstCityState,
+          tags: asset.tags
+        });
+        candidates.push({
+          sourceAssetId: asset.id,
+          sourceType: "client_bucket",
+          variantType: "video_original",
+          mediaFormat: "VIDEO",
+          mimeType: detectedMime,
+          mediaUrl: directUrl,
+          naturalFileName: this.buildMediaFloodNaturalFileName({
+            locationTitle: firstTitle,
+            cityState: firstCityState,
+            variantType: "video_original",
+            ordinal: candidates.length + 1,
+            extension: extensionFromMimeType(detectedMime)
+          }),
+          caption: fallback.caption,
+          altText: fallback.altText,
+          tags: fallback.tags,
+          locationCategory: this.mediaCategoryForVariant("video_original", "VIDEO"),
+          geoTag: {
+            cityState: firstCityState,
+            lat: firstSnapshot?.geo?.lat ?? null,
+            lng: firstSnapshot?.geo?.lng ?? null
+          },
+          storagePath: null
+        });
+        continue;
+      }
+
+      if (!isImageMimeType(detectedMime)) {
+        sourceFailures.push({
+          sourceType: "client_bucket",
+          sourceAssetId: asset.id,
+          fileName: asset.fileName,
+          error: `Unsupported asset MIME type for media flood: ${detectedMime}`
+        });
+        continue;
+      }
+
+      try {
+        const sourceBuffer = await this.downloadAssetBuffer(asset);
+        const sourceMeta = await sharp(sourceBuffer, { failOn: "none" }).metadata();
+        const sourceRatio =
+          sourceMeta.width && sourceMeta.height ? sourceMeta.width / Math.max(sourceMeta.height, 1) : 1;
+        const variantPlan: MediaFloodUploadCandidate["variantType"][] = ["action_shot", "team_photo"];
+        if (includeStories) {
+          variantPlan.push("story_vertical");
+        }
+        if (includeVirtualTours && sourceRatio >= 1.8) {
+          variantPlan.push("virtual_tour_360");
+        }
+
+        for (const variantType of variantPlan) {
+          if (candidates.length >= poolLimit) {
+            break;
+          }
+
+          const rendered = await this.renderEnhancedVariantBuffer({
+            sourceBuffer,
+            variantType
+          });
+
+          const vision = await this.generateVisionMetadataForImage({
+            imageBuffer: rendered.buffer,
+            mimeType: rendered.mimeType,
+            locationTitle: firstTitle,
+            variantType,
+            objectives: input.context.settings.objectives,
+            cityState: firstCityState,
+            fallbackTags: asset.tags,
+            enableVision
+          });
+          if (vision.warning) {
+            warnings.push(`${asset.fileName}: ${vision.warning}`);
+          }
+
+          let mediaUrl: string | null = null;
+          let storagePath: string | null = null;
+          const naturalFileName = this.buildMediaFloodNaturalFileName({
+            locationTitle: firstTitle,
+            cityState: firstCityState,
+            variantType,
+            ordinal: candidates.length + 1,
+            extension: "jpg"
+          });
+
+          if (storageBucket && isSupabaseConfigured()) {
+            try {
+              const uploaded = await this.uploadProcessedMediaVariant({
+                bucket: storageBucket,
+                clientId: input.action.clientId ?? input.context.connection.clientId,
+                actionId: input.action.id,
+                locationId: firstLocation?.locationId ?? "default",
+                naturalFileName,
+                buffer: rendered.buffer,
+                mimeType: rendered.mimeType
+              });
+              mediaUrl = uploaded.mediaUrl;
+              storagePath = uploaded.storagePath;
+            } catch (error) {
+              warnings.push(
+                `${asset.fileName}/${variantType}: failed to upload processed derivative (${error instanceof Error ? error.message : String(error)})`
+              );
+            }
+          }
+
+          if (!mediaUrl) {
+            mediaUrl = await this.resolveDirectAssetMediaUrl(asset);
+          }
+          if (!mediaUrl) {
+            sourceFailures.push({
+              sourceType: "client_bucket",
+              sourceAssetId: asset.id,
+              fileName: asset.fileName,
+              variantType,
+              error: "Unable to resolve a publishable media URL for processed image."
+            });
+            continue;
+          }
+
+          candidates.push({
+            sourceAssetId: asset.id,
+            sourceType: "client_bucket",
+            variantType,
+            mediaFormat: "PHOTO",
+            mimeType: rendered.mimeType,
+            mediaUrl,
+            naturalFileName,
+            caption: vision.caption,
+            altText: vision.altText,
+            tags: [...new Set([...(asset.tags ?? []), ...(vision.tags ?? [])])].slice(0, 16),
+            locationCategory: this.mediaCategoryForVariant(variantType, "PHOTO"),
+            geoTag: {
+              cityState: firstCityState,
+              lat: firstSnapshot?.geo?.lat ?? null,
+              lng: firstSnapshot?.geo?.lng ?? null
+            },
+            storagePath
+          });
+        }
+      } catch (error) {
+        sourceFailures.push({
+          sourceType: "client_bucket",
+          sourceAssetId: asset.id,
+          fileName: asset.fileName,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    for (const sourceUrl of externalUrls) {
+      if (candidates.length >= poolLimit) {
+        break;
+      }
+
+      const guessedMime = inferMediaMimeType({ url: sourceUrl });
+      if (isVideoMimeType(guessedMime)) {
+        if (!includeVideos) {
+          continue;
+        }
+        const fallback = this.buildFallbackVisionMetadata({
+          locationTitle: firstTitle,
+          variantType: "video_original",
+          cityState: firstCityState,
+          tags: ["external"]
+        });
+        candidates.push({
+          sourceAssetId: null,
+          sourceType: "external_url",
+          variantType: "video_original",
+          mediaFormat: "VIDEO",
+          mimeType: guessedMime,
+          mediaUrl: sourceUrl,
+          naturalFileName: this.buildMediaFloodNaturalFileName({
+            locationTitle: firstTitle,
+            cityState: firstCityState,
+            variantType: "video_original",
+            ordinal: candidates.length + 1,
+            extension: extensionFromMimeType(guessedMime)
+          }),
+          caption: fallback.caption,
+          altText: fallback.altText,
+          tags: fallback.tags,
+          locationCategory: this.mediaCategoryForVariant("video_original", "VIDEO"),
+          geoTag: {
+            cityState: firstCityState,
+            lat: firstSnapshot?.geo?.lat ?? null,
+            lng: firstSnapshot?.geo?.lng ?? null
+          },
+          storagePath: null
+        });
+        continue;
+      }
+
+      try {
+        const binary = await this.fetchBinaryWithTimeout(sourceUrl, 20000);
+        const detectedMime = inferMediaMimeType({
+          url: sourceUrl,
+          mimeType: binary.contentType
+        });
+        if (!isImageMimeType(detectedMime)) {
+          sourceFailures.push({
+            sourceType: "external_url",
+            sourceUrl,
+            error: `External URL is not an image/video asset (${detectedMime}).`
+          });
+          continue;
+        }
+
+        const sourceBuffer = binary.buffer;
+        const sourceMeta = await sharp(sourceBuffer, { failOn: "none" }).metadata();
+        const sourceRatio =
+          sourceMeta.width && sourceMeta.height ? sourceMeta.width / Math.max(sourceMeta.height, 1) : 1;
+        const variantPlan: MediaFloodUploadCandidate["variantType"][] = ["action_shot", "team_photo"];
+        if (includeStories) {
+          variantPlan.push("story_vertical");
+        }
+        if (includeVirtualTours && sourceRatio >= 1.8) {
+          variantPlan.push("virtual_tour_360");
+        }
+
+        for (const variantType of variantPlan) {
+          if (candidates.length >= poolLimit) {
+            break;
+          }
+
+          const rendered = await this.renderEnhancedVariantBuffer({
+            sourceBuffer,
+            variantType
+          });
+          const vision = await this.generateVisionMetadataForImage({
+            imageBuffer: rendered.buffer,
+            mimeType: rendered.mimeType,
+            locationTitle: firstTitle,
+            variantType,
+            objectives: input.context.settings.objectives,
+            cityState: firstCityState,
+            fallbackTags: ["external"],
+            enableVision
+          });
+          if (vision.warning) {
+            warnings.push(`${sourceUrl}: ${vision.warning}`);
+          }
+
+          const naturalFileName = this.buildMediaFloodNaturalFileName({
+            locationTitle: firstTitle,
+            cityState: firstCityState,
+            variantType,
+            ordinal: candidates.length + 1,
+            extension: "jpg"
+          });
+
+          let mediaUrl: string | null = sourceUrl;
+          let storagePath: string | null = null;
+          if (storageBucket && isSupabaseConfigured()) {
+            try {
+              const uploaded = await this.uploadProcessedMediaVariant({
+                bucket: storageBucket,
+                clientId: input.action.clientId ?? input.context.connection.clientId,
+                actionId: input.action.id,
+                locationId: firstLocation?.locationId ?? "default",
+                naturalFileName,
+                buffer: rendered.buffer,
+                mimeType: rendered.mimeType
+              });
+              mediaUrl = uploaded.mediaUrl;
+              storagePath = uploaded.storagePath;
+            } catch (error) {
+              warnings.push(
+                `${sourceUrl}/${variantType}: failed to upload processed derivative (${error instanceof Error ? error.message : String(error)})`
+              );
+            }
+          }
+
+          if (!mediaUrl) {
+            sourceFailures.push({
+              sourceType: "external_url",
+              sourceUrl,
+              variantType,
+              error: "Unable to resolve publishable URL for external media variant."
+            });
+            continue;
+          }
+
+          candidates.push({
+            sourceAssetId: null,
+            sourceType: "external_url",
+            variantType,
+            mediaFormat: "PHOTO",
+            mimeType: rendered.mimeType,
+            mediaUrl,
+            naturalFileName,
+            caption: vision.caption,
+            altText: vision.altText,
+            tags: [...new Set(["external", ...(vision.tags ?? [])])].slice(0, 16),
+            locationCategory: this.mediaCategoryForVariant(variantType, "PHOTO"),
+            geoTag: {
+              cityState: firstCityState,
+              lat: firstSnapshot?.geo?.lat ?? null,
+              lng: firstSnapshot?.geo?.lng ?? null
+            },
+            storagePath
+          });
+        }
+      } catch (error) {
+        sourceFailures.push({
+          sourceType: "external_url",
+          sourceUrl,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    if (!candidates.length) {
+      return {
+        objective,
+        status: "no_candidates_generated",
+        locationCount: input.context.locations.length,
+        sourceAssets: {
+          clientBucketAssets: allowedAssets.length,
+          externalUrls: externalUrls.length
+        },
+        sourceFailures,
+        warnings
+      };
+    }
+
+    const existingUrlSets = new Map<string, Set<string>>();
+    const existingMediaCount = new Map<string, number>();
+    for (const location of input.context.locations) {
+      try {
+        const existing = await input.context.client.listLocationMedia(location.accountId, location.locationId, 100);
+        const sourceSet = new Set(
+          existing
+            .map((item) => normalizeHttpUrl(item.sourceUrl ?? item.googleUrl ?? null))
+            .filter((value): value is string => Boolean(value))
+            .map((value) => value.toLowerCase())
+        );
+        existingUrlSets.set(location.locationName, sourceSet);
+        existingMediaCount.set(location.locationName, existing.length);
+      } catch (error) {
+        warnings.push(
+          `${location.locationName}: failed to list existing GBP media (${error instanceof Error ? error.message : String(error)}).`
+        );
+        existingUrlSets.set(location.locationName, new Set());
+        existingMediaCount.set(location.locationName, 0);
+      }
+    }
+
+    const plannedByLocation = new Map<string, Set<string>>();
+    const queue: Array<{ location: ResolvedLocation; candidate: MediaFloodUploadCandidate }> = [];
+    let skippedExisting = 0;
+    let skippedDuplicate = 0;
+    let skippedCapacity = 0;
+
+    let pointer = 0;
+    let guard = 0;
+    const guardLimit = targetAssets * 40;
+    while (queue.length < targetAssets && guard < guardLimit) {
+      const location = input.context.locations[pointer % input.context.locations.length];
+      const candidate = candidates[pointer % candidates.length];
+      pointer += 1;
+      guard += 1;
+
+      const normalizedUrl = normalizeHttpUrl(candidate.mediaUrl);
+      if (!normalizedUrl) {
+        continue;
+      }
+      const key = normalizedUrl.toLowerCase();
+      const existing = existingUrlSets.get(location.locationName) ?? new Set();
+      const planned = plannedByLocation.get(location.locationName) ?? new Set();
+      const alreadyCount = existingMediaCount.get(location.locationName) ?? existing.size;
+      if (alreadyCount + planned.size >= maxPerLocation) {
+        skippedCapacity += 1;
+        continue;
+      }
+      if (existing.has(key)) {
+        skippedExisting += 1;
+        continue;
+      }
+      if (planned.has(key)) {
+        skippedDuplicate += 1;
+        continue;
+      }
+
+      const locationSnapshot = snapshots.get(location.locationName);
+      const cityState = locationSnapshot ? formatCityState(locationSnapshot.storefrontAddress) : null;
+      const geoTag = includeGeoTags
+        ? {
+            cityState,
+            lat: locationSnapshot?.geo?.lat ?? null,
+            lng: locationSnapshot?.geo?.lng ?? null
+          }
+        : {
+            cityState: null,
+            lat: null,
+            lng: null
+          };
+
+      planned.add(key);
+      plannedByLocation.set(location.locationName, planned);
+      queue.push({
+        location,
+        candidate: {
+          ...candidate,
+          caption: cityState ? `${candidate.caption} (${cityState})`.slice(0, 900) : candidate.caption.slice(0, 900),
+          geoTag
+        }
+      });
+    }
+
+    if (!queue.length) {
+      return {
+        objective,
+        status: "no_uploads_after_dedupe",
+        locationCount: input.context.locations.length,
+        generatedCandidateCount: candidates.length,
+        requestedUploads: targetAssets,
+        skippedExisting,
+        skippedDuplicate,
+        skippedCapacity,
+        sourceFailures,
+        warnings
+      };
+    }
+
+    const uploaded: Array<Record<string, unknown>> = [];
+    const failed: Array<Record<string, unknown>> = [];
+    const batchSummaries: Array<Record<string, unknown>> = [];
+
+    for (let batchStart = 0; batchStart < queue.length; batchStart += batchSize) {
+      const batch = queue.slice(batchStart, batchStart + batchSize);
+      let batchUploaded = 0;
+      const batchFailed: Array<Record<string, unknown>> = [];
+
+      for (const entry of batch) {
+        try {
+          let created: { name?: string; createTime?: string };
+          try {
+            created = await input.context.client.uploadLocationMedia({
+              accountId: entry.location.accountId,
+              locationId: entry.location.locationId,
+              mediaFormat: entry.candidate.mediaFormat,
+              sourceUrl: entry.candidate.mediaUrl,
+              description: entry.candidate.caption,
+              locationCategory: entry.candidate.locationCategory
+            });
+          } catch (error) {
+            if (entry.candidate.mediaFormat !== "PHOTO") {
+              throw error;
+            }
+            created = await input.context.client.uploadLocationMedia({
+              accountId: entry.location.accountId,
+              locationId: entry.location.locationId,
+              mediaFormat: entry.candidate.mediaFormat,
+              sourceUrl: entry.candidate.mediaUrl,
+              description: entry.candidate.caption
+            });
+            warnings.push(
+              `${entry.location.locationName}: media uploaded without category fallback for ${entry.candidate.variantType}`
+            );
+          }
+          batchUploaded += 1;
+          uploaded.push({
+            locationName: entry.location.locationName,
+            locationId: entry.location.locationId,
+            variantType: entry.candidate.variantType,
+            mediaFormat: entry.candidate.mediaFormat,
+            sourceType: entry.candidate.sourceType,
+            sourceAssetId: entry.candidate.sourceAssetId,
+            sourceUrl: entry.candidate.mediaUrl,
+            storagePath: entry.candidate.storagePath ?? null,
+            caption: entry.candidate.caption,
+            tags: entry.candidate.tags,
+            geoTag: entry.candidate.geoTag,
+            createdName: created.name ?? null,
+            createdAt: created.createTime ?? nowIso()
+          });
+        } catch (error) {
+          const failure = {
+            locationName: entry.location.locationName,
+            locationId: entry.location.locationId,
+            variantType: entry.candidate.variantType,
+            mediaFormat: entry.candidate.mediaFormat,
+            sourceUrl: entry.candidate.mediaUrl,
+            error: error instanceof Error ? error.message : String(error)
+          };
+          batchFailed.push(failure);
+          failed.push(failure);
+        }
+        await sleep(cooldownMs + Math.floor(Math.random() * 250));
+      }
+
+      batchSummaries.push({
+        batchIndex: Math.floor(batchStart / batchSize) + 1,
+        size: batch.length,
+        uploaded: batchUploaded,
+        failed: batchFailed.length
+      });
+
+      if (batchStart + batchSize < queue.length) {
+        await sleep(cooldownMs + Math.floor(Math.random() * 400));
+      }
+    }
+
+    const uploadedByVariant = uploaded.reduce<Record<string, number>>((acc, row) => {
+      const key = typeof row.variantType === "string" ? row.variantType : "unknown";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    return {
+      objective,
+      status: failed.length ? (uploaded.length ? "partial_success" : "failed") : "completed",
+      locationCount: input.context.locations.length,
+      sourceAssets: {
+        clientBucketAssets: allowedAssets.length,
+        externalUrls: externalUrls.length
+      },
+      generatedCandidateCount: candidates.length,
+      requestedUploads: targetAssets,
+      queuedUploads: queue.length,
+      uploadedCount: uploaded.length,
+      failedCount: failed.length,
+      uploadedByVariant,
+      skippedExisting,
+      skippedDuplicate,
+      skippedCapacity,
+      config: {
+        batchSize,
+        cooldownMs,
+        maxPerLocation,
+        includeGeoTags,
+        includeStories,
+        includeVideos,
+        includeVirtualTours,
+        enableVision,
+        storageBucket: storageBucket ?? null
+      },
+      batchSummaries,
+      uploaded,
+      failed,
+      sourceFailures,
+      warnings
     };
   }
 
