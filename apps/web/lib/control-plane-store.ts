@@ -43,6 +43,11 @@ export interface IntegrationConnection {
   providerAccountId: string;
   scopes: string[];
   encryptedTokenPayload: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  tokenExpiresAt: string | null;
+  connectedAt: string;
+  lastRefreshAt: string | null;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -211,6 +216,11 @@ function mapIntegrationRow(row: Record<string, unknown>): IntegrationConnection 
     providerAccountId: String(row.provider_account_id),
     scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
     encryptedTokenPayload: (row.encrypted_token_payload as Record<string, unknown> | null) ?? {},
+    metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    tokenExpiresAt: typeof row.token_expires_at === "string" ? row.token_expires_at : null,
+    connectedAt: typeof row.connected_at === "string" ? row.connected_at : String(row.created_at),
+    lastRefreshAt: typeof row.last_refresh_at === "string" ? row.last_refresh_at : null,
+    isActive: row.is_active !== false,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -765,6 +775,8 @@ export async function connectIntegration(input: {
   providerAccountId: string;
   scopes: string[];
   encryptedTokenPayload: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  tokenExpiresAt?: string | null;
 }): Promise<IntegrationConnection> {
   if (!isSupabaseConfigured()) {
     const store = getStore();
@@ -777,6 +789,11 @@ export async function connectIntegration(input: {
       providerAccountId: input.providerAccountId,
       scopes: input.scopes,
       encryptedTokenPayload: input.encryptedTokenPayload,
+      metadata: input.metadata ?? {},
+      tokenExpiresAt: input.tokenExpiresAt ?? null,
+      connectedAt: nowIso(),
+      lastRefreshAt: null,
+      isActive: true,
       createdAt: nowIso(),
       updatedAt: nowIso()
     };
@@ -799,15 +816,25 @@ export async function connectIntegration(input: {
 
   const { data: row, error } = await supabase
     .from("integration_connections")
-    .insert({
-      organization_id: input.organizationId,
-      client_id: input.clientId,
-      provider: input.provider,
-      provider_account_id: input.providerAccountId,
-      encrypted_token_payload: input.encryptedTokenPayload,
-      scopes: input.scopes
-    })
-    .select("id,organization_id,client_id,provider,provider_account_id,scopes,encrypted_token_payload,created_at,updated_at")
+    .upsert(
+      {
+        organization_id: input.organizationId,
+        client_id: input.clientId,
+        provider: input.provider,
+        provider_account_id: input.providerAccountId,
+        encrypted_token_payload: input.encryptedTokenPayload,
+        scopes: input.scopes,
+        metadata: input.metadata ?? {},
+        token_expires_at: input.tokenExpiresAt ?? null,
+        is_active: true
+      },
+      {
+        onConflict: "client_id,provider,provider_account_id"
+      }
+    )
+    .select(
+      "id,organization_id,client_id,provider,provider_account_id,scopes,encrypted_token_payload,metadata,token_expires_at,connected_at,last_refresh_at,is_active,created_at,updated_at"
+    )
     .single();
   if (error || !row) {
     throw new Error(`Failed to connect integration: ${error?.message ?? "unknown error"}`);

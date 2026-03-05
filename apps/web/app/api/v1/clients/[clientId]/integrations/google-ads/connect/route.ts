@@ -36,7 +36,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     scopes: parsed.data.scopes,
     encryptedTokenPayload: {
       token: encryptJson(parsed.data.metadata)
-    }
+    },
+    metadata: parsed.data.metadata
   });
 
   return ok({ connection }, 201);

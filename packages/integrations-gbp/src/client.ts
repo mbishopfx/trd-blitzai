@@ -103,6 +103,13 @@ export class GbpApiClient {
     });
   }
 
+  async deleteLocalPost(accountId: string, locationId: string, localPostId: string): Promise<void> {
+    const endpoint = `https://mybusiness.googleapis.com/v4/accounts/${accountId}/locations/${locationId}/localPosts/${localPostId}`;
+    await this.request<Record<string, unknown>>(endpoint, {
+      method: "DELETE"
+    });
+  }
+
   async fetchReviews(accountId: string, locationId: string): Promise<GbpReview[]> {
     const endpoint = `https://mybusiness.googleapis.com/v4/accounts/${accountId}/locations/${locationId}/reviews`;
     const result = await this.request<{ reviews?: GbpReview[] }>(endpoint);
@@ -114,6 +121,22 @@ export class GbpApiClient {
     await this.request<Record<string, unknown>>(endpoint, {
       method: "PUT",
       body: { comment }
+    });
+  }
+
+  async patchLocation(
+    locationName: string,
+    patch: Record<string, unknown>,
+    updateMask: string[]
+  ): Promise<GbpLocation> {
+    const url = new URL(`https://mybusinessbusinessinformation.googleapis.com/v1/${locationName}`);
+    if (updateMask.length) {
+      url.searchParams.set("updateMask", updateMask.join(","));
+    }
+
+    return this.request<GbpLocation>(url.toString(), {
+      method: "PATCH",
+      body: patch
     });
   }
 }

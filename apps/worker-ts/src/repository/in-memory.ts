@@ -8,7 +8,13 @@ import type {
   BlitzRunStatus,
   PolicyDecision
 } from "@trd-aiblitz/domain";
-import type { ActionLogRecord, BlitzRunRepository, RollbackRecord } from "../types";
+import type {
+  ActionLogRecord,
+  BlitzRunRepository,
+  IntegrationConnectionPatch,
+  IntegrationConnectionRecord,
+  RollbackRecord
+} from "../types";
 
 interface InMemoryState {
   runs: Map<string, BlitzRun>;
@@ -16,6 +22,7 @@ interface InMemoryState {
   policies: Map<string, BlitzAutopilotPolicy>;
   logs: ActionLogRecord[];
   rollbacks: RollbackRecord[];
+  integrations: Map<string, IntegrationConnectionRecord>;
 }
 
 function nowIso(): string {
@@ -45,13 +52,18 @@ function defaultPolicy(clientId: string): BlitzAutopilotPolicy {
 export class InMemoryBlitzRepository implements BlitzRunRepository {
   private readonly state: InMemoryState;
 
-  constructor(seed?: { runs?: BlitzRun[]; policies?: BlitzAutopilotPolicy[] }) {
+  constructor(seed?: {
+    runs?: BlitzRun[];
+    policies?: BlitzAutopilotPolicy[];
+    integrations?: IntegrationConnectionRecord[];
+  }) {
     this.state = {
       runs: new Map((seed?.runs ?? []).map((run) => [run.id, run])),
       actions: new Map(),
       policies: new Map((seed?.policies ?? []).map((policy) => [policy.clientId, policy])),
       logs: [],
-      rollbacks: []
+      rollbacks: [],
+      integrations: new Map((seed?.integrations ?? []).map((connection) => [connection.id, connection]))
     };
   }
 
@@ -161,6 +173,37 @@ export class InMemoryBlitzRepository implements BlitzRunRepository {
 
   async createRollback(record: RollbackRecord): Promise<void> {
     this.state.rollbacks.push(record);
+  }
+
+  async getActiveIntegrationConnection(
+    clientId: string,
+    provider: IntegrationConnectionRecord["provider"]
+  ): Promise<IntegrationConnectionRecord | null> {
+    const matches = [...this.state.integrations.values()].filter(
+      (connection) => connection.clientId === clientId && connection.provider === provider && connection.isActive
+    );
+
+    if (!matches.length) {
+      return null;
+    }
+
+    return matches.sort((a, b) => {
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    })[0];
+  }
+
+  async updateIntegrationConnection(connectionId: string, patch: IntegrationConnectionPatch): Promise<void> {
+    const existing = this.state.integrations.get(connectionId);
+    if (!existing) {
+      throw new Error(`integration connection not found: ${connectionId}`);
+    }
+
+    const updated: IntegrationConnectionRecord = {
+      ...existing,
+      ...patch,
+      updatedAt: nowIso()
+    };
+    this.state.integrations.set(connectionId, updated);
   }
 
   seedRun(run: BlitzRun): void {

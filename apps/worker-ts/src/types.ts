@@ -63,6 +63,33 @@ export interface RollbackRecord {
   createdAt: string;
 }
 
+export interface IntegrationConnectionRecord {
+  id: string;
+  organizationId: string;
+  clientId: string;
+  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  providerAccountId: string;
+  scopes: string[];
+  encryptedTokenPayload: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  tokenExpiresAt: string | null;
+  connectedAt: string;
+  lastRefreshAt: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationConnectionPatch {
+  providerAccountId?: string;
+  scopes?: string[];
+  encryptedTokenPayload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  tokenExpiresAt?: string | null;
+  lastRefreshAt?: string | null;
+  isActive?: boolean;
+}
+
 export interface BlitzRunRepository {
   getRun(runId: string): Promise<BlitzRun | null>;
   listActions(runId: string): Promise<BlitzAction[]>;
@@ -89,6 +116,11 @@ export interface BlitzRunRepository {
   setRunStatus(runId: string, status: BlitzRunStatus, summary?: BlitzRunSummary): Promise<BlitzRun | null>;
   appendActionLog(log: ActionLogRecord): Promise<void>;
   createRollback(record: RollbackRecord): Promise<void>;
+  getActiveIntegrationConnection(
+    clientId: string,
+    provider: IntegrationConnectionRecord["provider"]
+  ): Promise<IntegrationConnectionRecord | null>;
+  updateIntegrationConnection(connectionId: string, patch: IntegrationConnectionPatch): Promise<void>;
 }
 
 export interface OrchestratorOptions {

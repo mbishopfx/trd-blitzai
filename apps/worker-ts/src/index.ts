@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import pino from "pino";
 import type { BlitzRun } from "@trd-aiblitz/domain";
 import { LogEventPublisher } from "./event-bus";
+import { GbpLiveActionExecutor } from "./executors/gbp-live";
 import { NoopActionExecutor } from "./executors/noop";
 import { BlitzRunOrchestrator } from "./orchestrator";
 import { DefaultBlitzPlanner } from "./planner";
@@ -9,7 +10,7 @@ import { startBlitzWorker } from "./queue";
 import { InMemoryBlitzRepository } from "./repository/in-memory";
 import { SupabaseBlitzRepository } from "./repository/supabase";
 import { getSupabaseServiceClient, isSupabaseConfigured } from "./supabase";
-import type { BlitzRunRepository } from "./types";
+import type { ActionExecutor, BlitzRunRepository } from "./types";
 
 const logger = pino({ name: "aiblitz-worker" });
 
@@ -37,7 +38,7 @@ async function runInProcess(): Promise<void> {
   const orchestrator = new BlitzRunOrchestrator({
     repository,
     planner: new DefaultBlitzPlanner(),
-    executor: new NoopActionExecutor(),
+    executor: createExecutor(repository, { allowLive: false }),
     events: new LogEventPublisher()
   });
 
@@ -54,13 +55,33 @@ function createQueueRepository(): BlitzRunRepository {
   return new InMemoryBlitzRepository();
 }
 
+function createExecutor(repository: BlitzRunRepository, options?: { allowLive?: boolean }): ActionExecutor {
+  if ((process.env.BLITZ_EXECUTOR_MODE ?? "live") === "noop") {
+    logger.warn("BLITZ_EXECUTOR_MODE=noop set; using simulated executor");
+    return new NoopActionExecutor();
+  }
+
+  if (options?.allowLive === false) {
+    logger.warn("in-process seed mode detected; using simulated executor");
+    return new NoopActionExecutor();
+  }
+
+  if (!isSupabaseConfigured()) {
+    logger.warn("Supabase is not configured; falling back to simulated executor");
+    return new NoopActionExecutor();
+  }
+
+  return new GbpLiveActionExecutor({ repository });
+}
+
 async function main(): Promise<void> {
   if (process.env.REDIS_URL) {
     logger.info("starting BullMQ worker mode");
+    const repository = createQueueRepository();
     startBlitzWorker({
-      repository: createQueueRepository(),
+      repository,
       planner: new DefaultBlitzPlanner(),
-      executor: new NoopActionExecutor(),
+      executor: createExecutor(repository, { allowLive: true }),
       events: new LogEventPublisher()
     });
     return;

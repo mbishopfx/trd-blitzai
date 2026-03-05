@@ -1,4 +1,4 @@
-import { decodeOAuthState, exchangeCodeForToken } from "@trd-aiblitz/integrations-gbp";
+import { decodeOAuthState, exchangeCodeForToken, GbpApiClient } from "@trd-aiblitz/integrations-gbp";
 import { NextRequest, NextResponse } from "next/server";
 import { connectIntegration } from "@/lib/control-plane-store";
 import { encryptJson } from "@/lib/crypto";
@@ -36,11 +36,35 @@ export async function GET(request: NextRequest) {
     code
   );
 
+  let providerAccountId = `gbp-${state.clientId}`;
+  const metadata: Record<string, unknown> = {
+    connectedAt: new Date().toISOString()
+  };
+
+  try {
+    const gbpClient = new GbpApiClient(tokenSet.accessToken);
+    const accounts = await gbpClient.listAccounts();
+    if (accounts.length > 0) {
+      providerAccountId = accounts[0].name;
+      metadata.accountName = accounts[0].name;
+      metadata.accountCount = accounts.length;
+      metadata.accounts = accounts.slice(0, 25).map((account) => ({
+        name: account.name,
+        accountName: account.accountName ?? null,
+        type: account.type ?? null
+      }));
+    } else {
+      metadata.accountCount = 0;
+    }
+  } catch (error) {
+    metadata.accountDiscoveryError = error instanceof Error ? error.message : String(error);
+  }
+
   await connectIntegration({
     organizationId: state.organizationId,
     clientId: state.clientId,
     provider: "gbp",
-    providerAccountId: `gbp-${state.clientId}`,
+    providerAccountId,
     scopes: tokenSet.scopes,
     encryptedTokenPayload: {
       token: encryptJson({
@@ -48,7 +72,9 @@ export async function GET(request: NextRequest) {
         refreshToken: tokenSet.refreshToken,
         expiresAt: tokenSet.expiresAt
       })
-    }
+    },
+    metadata,
+    tokenExpiresAt: tokenSet.expiresAt
   });
 
   const url = new URL(state.returnPath, siteUrl);

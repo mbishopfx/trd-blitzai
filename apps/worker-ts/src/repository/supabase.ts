@@ -7,7 +7,13 @@ import type {
   BlitzRun,
   BlitzRunSummary
 } from "@trd-aiblitz/domain";
-import type { ActionLogRecord, BlitzRunRepository, RollbackRecord } from "../types";
+import type {
+  ActionLogRecord,
+  BlitzRunRepository,
+  IntegrationConnectionPatch,
+  IntegrationConnectionRecord,
+  RollbackRecord
+} from "../types";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -83,6 +89,25 @@ function mapActionRow(row: Record<string, unknown>): BlitzAction {
     createdAt: String(row.created_at),
     executedAt: toIsoOrNull(row.executed_at),
     rolledBackAt: toIsoOrNull(row.rolled_back_at)
+  };
+}
+
+function mapIntegrationConnectionRow(row: Record<string, unknown>): IntegrationConnectionRecord {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    clientId: String(row.client_id),
+    provider: String(row.provider) as IntegrationConnectionRecord["provider"],
+    providerAccountId: String(row.provider_account_id),
+    scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
+    encryptedTokenPayload: (row.encrypted_token_payload as Record<string, unknown> | null) ?? {},
+    metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    tokenExpiresAt: toIsoOrNull(row.token_expires_at),
+    connectedAt: String(row.connected_at ?? row.created_at ?? nowIso()),
+    lastRefreshAt: toIsoOrNull(row.last_refresh_at),
+    isActive: row.is_active !== false,
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? nowIso())
   };
 }
 
@@ -330,6 +355,64 @@ export class SupabaseBlitzRepository implements BlitzRunRepository {
     });
     if (error) {
       throw new Error(`Failed to insert rollback record for ${record.actionId}: ${error.message}`);
+    }
+  }
+
+  async getActiveIntegrationConnection(
+    clientId: string,
+    provider: IntegrationConnectionRecord["provider"]
+  ): Promise<IntegrationConnectionRecord | null> {
+    const { data, error } = await this.supabase
+      .from("integration_connections")
+      .select(
+        "id,organization_id,client_id,provider,provider_account_id,scopes,encrypted_token_payload,metadata,token_expires_at,connected_at,last_refresh_at,is_active,created_at,updated_at"
+      )
+      .eq("client_id", clientId)
+      .eq("provider", provider)
+      .eq("is_active", true)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`Failed to load integration connection for client ${clientId}: ${error.message}`);
+    }
+    if (!data) {
+      return null;
+    }
+    return mapIntegrationConnectionRow(data as Record<string, unknown>);
+  }
+
+  async updateIntegrationConnection(connectionId: string, patch: IntegrationConnectionPatch): Promise<void> {
+    const updatePatch: Record<string, unknown> = {};
+    if (patch.providerAccountId !== undefined) {
+      updatePatch.provider_account_id = patch.providerAccountId;
+    }
+    if (patch.scopes !== undefined) {
+      updatePatch.scopes = patch.scopes;
+    }
+    if (patch.encryptedTokenPayload !== undefined) {
+      updatePatch.encrypted_token_payload = patch.encryptedTokenPayload;
+    }
+    if (patch.metadata !== undefined) {
+      updatePatch.metadata = patch.metadata;
+    }
+    if (patch.tokenExpiresAt !== undefined) {
+      updatePatch.token_expires_at = patch.tokenExpiresAt;
+    }
+    if (patch.lastRefreshAt !== undefined) {
+      updatePatch.last_refresh_at = patch.lastRefreshAt;
+    }
+    if (patch.isActive !== undefined) {
+      updatePatch.is_active = patch.isActive;
+    }
+
+    if (!Object.keys(updatePatch).length) {
+      return;
+    }
+
+    const { error } = await this.supabase.from("integration_connections").update(updatePatch).eq("id", connectionId);
+    if (error) {
+      throw new Error(`Failed to update integration connection ${connectionId}: ${error.message}`);
     }
   }
 
