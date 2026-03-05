@@ -672,11 +672,23 @@ export async function upsertAutopilotPolicy(
   }
 
   const supabase = getSupabaseServiceClient();
+  const { data: clientRow, error: clientError } = await supabase
+    .from("clients")
+    .select("organization_id")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (clientError || !clientRow) {
+    throw new Error(
+      `Failed to resolve client organization for autopilot policy upsert ${clientId}: ${clientError?.message ?? "client not found"}`
+    );
+  }
+
   const updatedAt = nowIso();
   const { data: row, error } = await supabase
     .from("autopilot_policies")
     .upsert(
       {
+        organization_id: String(clientRow.organization_id),
         client_id: clientId,
         max_daily_actions_per_location: input.maxDailyActionsPerLocation,
         max_actions_per_phase: input.maxActionsPerPhase,
