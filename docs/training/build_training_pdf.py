@@ -21,6 +21,10 @@ SOURCE_FILES = [
     TRAINING_DIR / "01-platform-overview.txt",
     TRAINING_DIR / "02-feature-benefits-reference.txt",
     TRAINING_DIR / "03-agency-operating-playbook.txt",
+    TRAINING_DIR / "04-what-it-actually-does-today.txt",
+    TRAINING_DIR / "05-end-to-end-run-flow-explained.txt",
+    TRAINING_DIR / "06-system-prompt-to-product-mapping.txt",
+    TRAINING_DIR / "07-quick-orientation-for-new-team-members.txt",
 ]
 
 

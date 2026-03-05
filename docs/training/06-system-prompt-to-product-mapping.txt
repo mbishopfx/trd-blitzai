@@ -1,0 +1,146 @@
+TRD AIBLITZ TEAM TRAINING
+Document: System Prompt to Product Mapping
+Version: v1
+Date: 2026-03-05
+
+This document translates the original "Blitz Protocol" vision language into current product reality.
+Use it when you need to explain what is already built vs what is still being implemented.
+
+------------------------------------------------------------
+VISION CLAIM: "Fully autonomous, executes optimizations in real time"
+------------------------------------------------------------
+Current build status:
+- Partially true today.
+
+What is already true:
+- Autonomous orchestration framework is built.
+- Run phases execute with policy gates, retries, idempotency, logs, and status transitions.
+- Queue-driven execution works when Redis + worker are running.
+
+What is still pending for full claim:
+- Live provider-side action executors for each phase action (default executor is currently Noop).
+
+------------------------------------------------------------
+VISION CLAIM: "Blitz Protocol 60-90 minute singularity event"
+------------------------------------------------------------
+Current build status:
+- Framework true, outcome-side partially true.
+
+What is already true:
+- Phase sequencing exists end-to-end in orchestrator.
+- UI supports protocol module selection at launch and embeds modules into run policy snapshot.
+
+What is still pending for full claim:
+- Full external mutation adapters tied to each module action path.
+
+------------------------------------------------------------
+VISION CLAIM: "Completeness overhaul updates every GBP field"
+------------------------------------------------------------
+Current build status:
+- Planned and represented in action planning; not yet fully wired as live field-level mutator.
+
+What exists:
+- Completeness phase actions are planned in worker planner.
+- GBP integration package has location fetch/update-capable client patterns.
+
+Gap:
+- Full production executor mapping for deterministic field patch operations by playbook.
+
+------------------------------------------------------------
+VISION CLAIM: "Visual and media flood with derivatives and metadata"
+------------------------------------------------------------
+Current build status:
+- Not fully productized yet.
+
+What exists:
+- Media phase exists in planner and run model.
+
+Gap:
+- Real media processing pipeline and provider upload execution wiring.
+
+------------------------------------------------------------
+VISION CLAIM: "GEO content barrage and AI-overview-ready post burst"
+------------------------------------------------------------
+Current build status:
+- Planning scaffolding exists.
+
+What exists:
+- Content phase planned actions for initial burst and follow-up cadence.
+
+Gap:
+- Live content generation + publishing pipeline fully wired in executor layer.
+
+------------------------------------------------------------
+VISION CLAIM: "All-ratings review automation with fast replies"
+------------------------------------------------------------
+Current build status:
+- Policy + planning + UI control exists.
+
+What exists:
+- Review action type in domain model.
+- Planner includes all-rating review action intent.
+- Autopilot policy stores reviewReplyAllRatingsEnabled.
+
+Gap:
+- Full production executor binding to pull pending reviews and post replies at scale.
+
+------------------------------------------------------------
+VISION CLAIM: "Interaction optimization and CTA signal boosting"
+------------------------------------------------------------
+Current build status:
+- Modeled in planner, not fully connected to live external mutation loops.
+
+What exists:
+- Interaction phase with hours_update action intent.
+
+Gap:
+- Live optimization adapter + feedback loop execution.
+
+------------------------------------------------------------
+VISION CLAIM: "Attribution v1 with GBP + GA4 + Google Ads"
+------------------------------------------------------------
+Current build status:
+- Strongly true.
+
+What exists:
+- Attribution contracts and normalization package.
+- API endpoint for attribution windows in web app.
+- Python service endpoints for Ads query and attribution sync.
+- UI blended panel in control plane.
+
+Remaining hardening:
+- Production scheduling and operational data freshness automation.
+
+------------------------------------------------------------
+VISION CLAIM: "Enterprise controls: RBAC, billing, white-label, audit"
+------------------------------------------------------------
+Current build status:
+- Mixed.
+
+Already implemented:
+- RBAC + org scoping
+- API key model and RPCs
+- Audit-friendly action/event patterns and immutable audit table guardrails
+- Billing snapshot UI surface
+
+Not fully complete yet:
+- Full Stripe lifecycle automation in the control plane UX
+- Full white-label/domain management workflow surface
+
+------------------------------------------------------------
+PRACTICAL ONE-LINER YOU CAN USE WITH LEADERSHIP
+------------------------------------------------------------
+
+"The platform core is real and enterprise-ready: multi-tenant control plane, policy-governed orchestration,
+rollback and attribution. The remaining lift is finishing provider-specific live executors so every planned
+Blitz phase action becomes direct external execution."
+
+------------------------------------------------------------
+DEVELOPMENT PRIORITY ORDER (RECOMMENDED)
+------------------------------------------------------------
+
+1) Replace NoopActionExecutor with real provider executors by phase.
+2) Add scheduler for continuous autopilot run triggering.
+3) Complete white-label and billing management surfaces.
+4) Expand compliance policy flags for rapid feature narrowing.
+5) Add richer operator diagnostics and run replay tooling.

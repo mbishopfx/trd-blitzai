@@ -1,0 +1,131 @@
+TRD AIBLITZ TEAM TRAINING
+Document: Quick Orientation for New Team Members
+Version: v1
+Date: 2026-03-05
+
+If you are new and need to understand the platform quickly, read this in order.
+
+------------------------------------------------------------
+PART 1: WHAT THIS APP IS
+------------------------------------------------------------
+Blitz AI Agent is an agency operations platform for local optimization workflows.
+It combines:
+- Operator UI
+- Workflow orchestration
+- Policy/risk controls
+- Attribution reporting
+
+Think of it as:
+"Mission control for local growth operations, with automation guardrails."
+
+------------------------------------------------------------
+PART 2: WHAT YOU SEE IN THE UI
+------------------------------------------------------------
+
+A) Sidebar toolbar
+- Fast navigation across key sections.
+
+B) Overview
+- System state, workspace/client context, auth context.
+
+C) Onboarding
+- Create org
+- Create client
+- Connect integrations
+- Launch Blitz run
+
+D) Protocol coverage
+- Shows which protocol modules are included and enabled.
+
+E) Run monitor
+- Run history
+- Action table with filters
+- Rollback controls
+
+F) Autopilot policy
+- Daily limits, phase limits, cooldown, escalation, action scope.
+
+G) Attribution
+- Blended GBP + GA4 + Google Ads output.
+
+H) Admin
+- API key management and org-level access controls.
+
+I) Timeline
+- Operational event stream.
+
+------------------------------------------------------------
+PART 3: YOUR DAY-ONE WORKFLOW
+------------------------------------------------------------
+
+1) Select correct org/client.
+2) Confirm integration status.
+3) Confirm policy values for risk and limits.
+4) Launch run with protocol modules.
+5) Monitor actions and failures.
+6) Roll back only with clear reason.
+7) Review attribution after execution window.
+8) Log findings in timeline and plan next cycle.
+
+------------------------------------------------------------
+PART 4: HOW TO EXPLAIN TO CLIENTS
+------------------------------------------------------------
+Use this script:
+"We run your local optimization through a controlled AI operations platform. It executes approved actions,
+tracks results, and adjusts continuously. You get better execution speed plus clear reporting, not guesswork."
+
+------------------------------------------------------------
+PART 5: MOST COMMON CONFUSION
+------------------------------------------------------------
+
+Confusion:
+"If this is autonomous, why do we still monitor it?"
+
+Answer:
+Autonomous means it executes repetitive workflows without manual clicking.
+It does not mean we remove oversight. We still control policy, quality, and client safety.
+
+Confusion:
+"Is every vision feature fully live today?"
+
+Answer:
+Core control plane and orchestration are live. Some external executor integrations are still being finalized.
+Read:
+- 04-what-it-actually-does-today.txt
+- 06-system-prompt-to-product-mapping.txt
+
+------------------------------------------------------------
+PART 6: WHERE TO LOOK IN CODE
+------------------------------------------------------------
+
+UI:
+- apps/web/app/control-plane.tsx
+
+Web APIs:
+- apps/web/app/api/v1/*
+
+Data and persistence logic:
+- apps/web/lib/control-plane-store.ts
+- apps/web/lib/auth.ts
+
+Orchestrator:
+- apps/worker-ts/src/orchestrator.ts
+- apps/worker-ts/src/planner.ts
+- apps/worker-ts/src/policy-engine.ts
+
+Execution adapter:
+- apps/worker-ts/src/executors/noop.ts
+
+Attribution service:
+- services/worker-py/main.py
+- services/worker-py/app/attribution.py
+
+------------------------------------------------------------
+FINAL MENTAL MODEL
+------------------------------------------------------------
+The platform is:
+- Not a simple dashboard
+- Not yet a finished "all live adapters" system
+- Already a serious enterprise core with operational leverage
+
+Your job is to operate it correctly, explain it accurately, and help close the remaining adapter gaps.

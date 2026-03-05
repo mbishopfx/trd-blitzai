@@ -1,0 +1,138 @@
+TRD AIBLITZ TEAM TRAINING
+Document: What It Actually Does Today
+Version: v1
+Date: 2026-03-05
+
+This document is the honest implementation snapshot of the platform as of 2026-03-05.
+Use this when someone asks: "Is this running for real, or just UI?"
+
+------------------------------------------------------------
+1) WHAT IS FULLY LIVE IN THE PRODUCT TODAY
+------------------------------------------------------------
+
+A) Agency control plane UI
+- A full operator dashboard exists in the web app.
+- Includes: onboarding, integrations, run launch, run monitor, policy controls, attribution view, API key admin.
+- It is not just a health page anymore.
+Code:
+- apps/web/app/control-plane.tsx
+- apps/web/app/control-plane.module.css
+
+B) Multi-tenant org/client model with role-aware API behavior
+- Organization and client creation/listing endpoints are live.
+- Role checks and org scoping are enforced when Supabase is configured.
+Code:
+- apps/web/lib/auth.ts
+- apps/web/app/api/v1/orgs/route.ts
+- apps/web/app/api/v1/orgs/[orgId]/clients/route.ts
+
+C) Supabase auth + API key security model
+- Bearer token auth and org membership checks are implemented.
+- Scoped API key create/list/resolve flow is implemented.
+Code:
+- apps/web/lib/auth.ts
+- apps/web/app/api/v1/orgs/[orgId]/api-keys/route.ts
+- supabase/migrations/202603041500_policy_and_api_keys.sql
+
+D) Google Business Profile OAuth start/callback flow
+- OAuth URL generation and callback token exchange are implemented.
+- Tokens are encrypted before storage in integration connection payload.
+Code:
+- apps/web/app/api/v1/gbp/oauth/start/route.ts
+- apps/web/app/api/v1/gbp/oauth/callback/route.ts
+- packages/integrations-gbp/src/oauth.ts
+- apps/web/lib/crypto.ts
+
+E) Blitz run APIs and run-history visibility
+- Create run endpoint works.
+- Run detail, action list, and client run-history endpoints work.
+- Rollback endpoint works (single + batch from UI).
+Code:
+- apps/web/app/api/v1/clients/[clientId]/blitz-runs/route.ts
+- apps/web/app/api/v1/blitz-runs/[runId]/route.ts
+- apps/web/app/api/v1/blitz-runs/[runId]/actions/route.ts
+- apps/web/app/api/v1/blitz-actions/[actionId]/rollback/route.ts
+
+F) Policy configuration and persistence
+- Per-client autopilot policy is persisted and loaded.
+- Includes action limits, cooldown, escalation behavior, and review reply toggle.
+Code:
+- apps/web/app/api/v1/clients/[clientId]/autopilot/policies/route.ts
+- apps/web/lib/control-plane-store.ts
+
+G) Attribution panel and normalized blended metrics
+- Endpoint for blended attribution window is implemented.
+- Data model supports GBP + GA4 + Google Ads daily rows.
+Code:
+- apps/web/app/api/v1/clients/[clientId]/attribution/route.ts
+- packages/integrations-attribution/src/*
+- services/worker-py/app/attribution.py
+
+H) Worker orchestrator framework is implemented
+- Phase order exists.
+- Policy gate, idempotency, retries, rollback threshold logic exist.
+Code:
+- apps/worker-ts/src/orchestrator.ts
+- apps/worker-ts/src/policy-engine.ts
+- apps/worker-ts/src/idempotency.ts
+- apps/worker-ts/src/retry.ts
+
+------------------------------------------------------------
+2) WHAT IS IMPLEMENTED BUT CURRENTLY SIMULATED
+------------------------------------------------------------
+
+The core execution loop currently uses a Noop executor by default.
+Meaning:
+- Actions are "executed" in orchestration flow.
+- Output is a synthetic success payload, not a real provider-side mutation for each phase action.
+
+Code:
+- apps/worker-ts/src/executors/noop.ts
+- apps/worker-ts/src/index.ts
+
+Business interpretation:
+- The platform orchestration and safety rails are real.
+- The final action adapter layer for true phase-by-phase live mutations is the main remaining production-hardening step.
+
+------------------------------------------------------------
+3) WHAT EXISTS AS SUPPORTING MODULES BUT IS NOT FULLY WIRED E2E
+------------------------------------------------------------
+
+A) GBP API client methods
+- Listing accounts/locations, fetching location, posting, and review reply methods exist.
+- Not yet mapped as end-to-end action executors in the main worker runtime.
+Code:
+- packages/integrations-gbp/src/client.ts
+
+B) Python attribution service
+- Ads query and attribution sync endpoints are real.
+- Requires external credentials per request or secrets-file config.
+Code:
+- services/worker-py/main.py
+- services/worker-py/app/google_ads_client.py
+- services/worker-py/app/ga4_client.py
+
+------------------------------------------------------------
+4) WHAT IS NOT YET FULLY PRODUCTIZED FROM THE ORIGINAL VISION
+------------------------------------------------------------
+
+These are vision items not yet fully automated in production execution:
+- Real media enhancement and derivative generation pipeline for uploads
+- Fully automated GEO content generation + post publishing executor in worker runtime
+- Q&A seeding automation and moderation loop
+- Review request campaign execution via SMS/email/CRM connectors
+- Always-on scheduled autopilot daemon that triggers periodic runs automatically
+- Full competitor intelligence ingestion pipeline tied into action planning
+
+Important:
+The current app is a strong enterprise control plane + orchestration core, with some vision modules still in integration stage.
+
+------------------------------------------------------------
+5) BOTTOM LINE FOR TEAM COMMUNICATION
+------------------------------------------------------------
+
+If someone asks "What does it do right now?"
+Use this answer:
+"It is already a real operations platform with onboarding, auth, integrations, run orchestration framework,
+policy controls, rollback, attribution, and audit-safe patterns. The next layer we are finishing is full
+live action executors per Blitz phase so every planned action writes directly to external providers."

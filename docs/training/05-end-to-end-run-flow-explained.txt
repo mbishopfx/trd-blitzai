@@ -1,0 +1,143 @@
+TRD AIBLITZ TEAM TRAINING
+Document: End-to-End Run Flow Explained
+Version: v1
+Date: 2026-03-05
+
+This document explains exactly what happens when an operator clicks "Launch Blitz Run."
+
+------------------------------------------------------------
+SYSTEM MAP (SIMPLE VIEW)
+------------------------------------------------------------
+
+Operator UI (Next.js)
+  -> POST /api/v1/clients/{clientId}/blitz-runs
+  -> Creates run row
+  -> Publishes blitz.run.requested event
+
+Event handling
+  -> If REDIS_URL is configured: enqueue BullMQ job
+  -> If REDIS_URL is missing: log event only (no queue job)
+
+Worker (Railway / Node)
+  -> Pulls blitz job
+  -> Runs orchestrator phase loop
+  -> Writes actions/logs/status to repository (Supabase or in-memory)
+
+Control plane UI
+  -> Polls run + actions
+  -> Displays progression and failures
+  -> Allows rollback actions
+
+------------------------------------------------------------
+STEP-BY-STEP FLOW
+------------------------------------------------------------
+
+1) Operator launches run
+- UI sends triggeredBy + policySnapshot.
+- API validates payload and role.
+Code:
+- apps/web/app/control-plane.tsx
+- apps/web/app/api/v1/clients/[clientId]/blitz-runs/route.ts
+
+2) Run row is created
+- A run is inserted with status "created."
+- In-memory mode seeds placeholder actions immediately.
+- Supabase mode expects worker to create action rows during execution.
+Code:
+- apps/web/lib/control-plane-store.ts
+
+3) Run requested event is published
+- Event type: blitz.run.requested
+- If Redis exists, BullMQ job "blitz.run" is queued.
+Code:
+- apps/web/lib/events.ts
+
+4) Worker picks up run job
+- Worker calls orchestrator.executeRun(runId)
+- Run status is moved to "running"
+Code:
+- apps/worker-ts/src/queue.ts
+- apps/worker-ts/src/orchestrator.ts
+
+5) Orchestrator processes phases in order
+Phase order:
+- preflight
+- completeness
+- media
+- content
+- reviews
+- interaction
+- postcheck
+Code:
+- apps/worker-ts/src/constants.ts
+- apps/worker-ts/src/orchestrator.ts
+
+6) For each planned action
+- Build deterministic idempotency key
+- Check if already executed
+- Run policy gate (allow/deny/throttle/escalation)
+- Insert action row with policy decision
+- Execute action with retry/backoff
+- Update action status + logs + events
+Code:
+- apps/worker-ts/src/idempotency.ts
+- apps/worker-ts/src/policy-engine.ts
+- apps/worker-ts/src/retry.ts
+- apps/worker-ts/src/orchestrator.ts
+
+7) Failure handling
+- Failed actions are logged.
+- Critical-failure threshold can trigger rollback coordinator.
+- Rollback records are written.
+Code:
+- apps/worker-ts/src/orchestrator.ts
+- apps/worker-ts/src/repository/supabase.ts
+
+8) Run completion
+- Run status ends as completed, failed, partially_completed, or rolled_back.
+- Summary object is persisted.
+- UI reads run + actions for final operator review.
+Code:
+- apps/worker-ts/src/orchestrator.ts
+- apps/web/app/api/v1/blitz-runs/[runId]/route.ts
+- apps/web/app/api/v1/blitz-runs/[runId]/actions/route.ts
+
+------------------------------------------------------------
+HOW TO KNOW A RUN IS TRULY EXECUTING
+------------------------------------------------------------
+
+Green signs:
+- Run status changes from created -> running.
+- Action rows appear and move pending -> executed/failed.
+- Action logs grow during execution.
+
+Warning signs:
+- Run stays in created and no actions appear.
+Likely causes:
+- REDIS_URL missing in web or worker runtime.
+- Worker process not running.
+- Queue or connectivity issue.
+
+------------------------------------------------------------
+CURRENT EXECUTION REALITY (IMPORTANT)
+------------------------------------------------------------
+
+Today, default executor is NoopActionExecutor.
+That means:
+- Orchestration, policy, retries, logs, and status transitions are real.
+- External action side effects are simulated unless replaced with provider-specific executors.
+
+Code:
+- apps/worker-ts/src/executors/noop.ts
+
+------------------------------------------------------------
+OPERATOR TROUBLESHOOTING CHECKLIST
+------------------------------------------------------------
+
+1) Confirm run exists in run history.
+2) Confirm worker service is live.
+3) Confirm Redis connectivity.
+4) Confirm Supabase service role envs are present.
+5) Refresh run monitor.
+6) Inspect action failures and rollback if needed.
+7) Re-run only after failure root cause is known.
