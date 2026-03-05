@@ -22,9 +22,9 @@ export async function GET(request: NextRequest) {
     return fail("clientId query param is required", 400);
   }
 
-  const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-  const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+  const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
 
   if (!oauthClientId || !oauthClientSecret || !siteUrl) {
     return fail("GBP OAuth environment is not configured", 503);

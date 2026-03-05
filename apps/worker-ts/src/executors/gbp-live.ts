@@ -318,9 +318,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       throw new Error("GBP access token is expiring and refresh token is not available.");
     }
 
-    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
     if (!clientId || !clientSecret || !siteUrl) {
       throw new Error("Google OAuth env missing. Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, NEXT_PUBLIC_SITE_URL.");
     }
