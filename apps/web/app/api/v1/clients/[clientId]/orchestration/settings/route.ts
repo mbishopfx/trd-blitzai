@@ -1,0 +1,74 @@
+import { upsertClientOrchestrationSettingsSchema } from "@trd-aiblitz/domain";
+import { NextRequest } from "next/server";
+import { getRequestContext, hasRole } from "@/lib/auth";
+import {
+  getClientById,
+  getClientOrchestrationSettings,
+  upsertClientOrchestrationSettings
+} from "@/lib/control-plane-store";
+import { fail, ok } from "@/lib/http";
+import { isSupabaseConfigured } from "@/lib/supabase";
+
+interface Params {
+  params: { clientId: string };
+}
+
+export async function GET(request: NextRequest, { params }: Params) {
+  const ctx = await getRequestContext(request);
+  if (isSupabaseConfigured()) {
+    if (!ctx.isAuthenticated) {
+      return fail("Unauthorized", 401);
+    }
+    if (!hasRole(ctx, "analyst")) {
+      return fail("Forbidden", 403);
+    }
+  }
+
+  const client = await getClientById(params.clientId);
+  if (!client) {
+    return fail("Client not found", 404);
+  }
+  if (isSupabaseConfigured() && client.organizationId !== ctx.organizationId) {
+    return fail("Forbidden", 403);
+  }
+
+  return ok({ settings: await getClientOrchestrationSettings(params.clientId) });
+}
+
+export async function POST(request: NextRequest, { params }: Params) {
+  const ctx = await getRequestContext(request);
+  if (isSupabaseConfigured()) {
+    if (!ctx.isAuthenticated) {
+      return fail("Unauthorized", 401);
+    }
+    if (!hasRole(ctx, "admin")) {
+      return fail("Forbidden", 403);
+    }
+  }
+
+  const client = await getClientById(params.clientId);
+  if (!client) {
+    return fail("Client not found", 404);
+  }
+  if (isSupabaseConfigured() && client.organizationId !== ctx.organizationId) {
+    return fail("Forbidden", 403);
+  }
+
+  const body = await request.json().catch(() => null);
+  const parsed = upsertClientOrchestrationSettingsSchema.safeParse(body);
+  if (!parsed.success) {
+    return fail("Invalid orchestration settings payload", 400, parsed.error.flatten());
+  }
+
+  const settings = await upsertClientOrchestrationSettings(params.clientId, {
+    tone: parsed.data.tone,
+    objectives: parsed.data.objectives,
+    photoAssetUrls: parsed.data.photoAssetUrls,
+    sitemapUrl: parsed.data.sitemapUrl,
+    defaultPostUrl: parsed.data.defaultPostUrl,
+    reviewReplyStyle: parsed.data.reviewReplyStyle,
+    metadata: parsed.data.metadata
+  });
+
+  return ok({ settings });
+}

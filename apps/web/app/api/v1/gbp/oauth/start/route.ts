@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   }
 
   const clientId = request.nextUrl.searchParams.get("clientId");
-  const returnPath = request.nextUrl.searchParams.get("returnPath") ?? "/dashboard/blitz";
+  const returnPath = request.nextUrl.searchParams.get("returnPath") ?? "/dashboard/clients";
 
   if (!clientId) {
     return fail("clientId query param is required", 400);

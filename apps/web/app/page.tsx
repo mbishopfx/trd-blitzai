@@ -1,5 +1,5 @@
-import { ControlPlaneDashboard } from "./control-plane";
+import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  return <ControlPlaneDashboard />;
+  redirect("/dashboard");
 }

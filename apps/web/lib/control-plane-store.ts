@@ -52,6 +52,20 @@ export interface IntegrationConnection {
   updatedAt: string;
 }
 
+export interface ClientOrchestrationSettings {
+  clientId: string;
+  organizationId: string;
+  tone: string;
+  objectives: string[];
+  photoAssetUrls: string[];
+  sitemapUrl: string | null;
+  defaultPostUrl: string | null;
+  reviewReplyStyle: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RollbackRecord {
   id: string;
   runId: string;
@@ -66,6 +80,7 @@ interface Store {
   runs: Map<string, BlitzRun>;
   actions: Map<string, BlitzAction>;
   autopilotPolicies: Map<string, BlitzAutopilotPolicy>;
+  orchestrationSettings: Map<string, ClientOrchestrationSettings>;
   integrations: Map<string, IntegrationConnection>;
   rollbacks: Map<string, RollbackRecord>;
   attribution: DailyChannelMetric[];
@@ -103,6 +118,7 @@ function getStore(): Store {
       runs: new Map(),
       actions: new Map(),
       autopilotPolicies: new Map(),
+      orchestrationSettings: new Map(),
       integrations: new Map(),
       rollbacks: new Map(),
       attribution: []
@@ -143,6 +159,29 @@ function defaultPolicy(clientId: string): BlitzAutopilotPolicy {
       "attribute_update"
     ],
     reviewReplyAllRatingsEnabled: true,
+    updatedAt: nowIso()
+  };
+}
+
+function defaultOrchestrationSettings(
+  clientId: string,
+  organizationId = "demo-org"
+): ClientOrchestrationSettings {
+  return {
+    clientId,
+    organizationId,
+    tone: "professional-local-expert",
+    objectives: [
+      "Increase local visibility",
+      "Improve review response velocity",
+      "Publish location-aware GBP content consistently"
+    ],
+    photoAssetUrls: [],
+    sitemapUrl: null,
+    defaultPostUrl: null,
+    reviewReplyStyle: "balanced",
+    metadata: {},
+    createdAt: nowIso(),
     updatedAt: nowIso()
   };
 }
@@ -223,6 +262,22 @@ function mapIntegrationRow(row: Record<string, unknown>): IntegrationConnection 
     isActive: row.is_active !== false,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
+  };
+}
+
+function mapOrchestrationSettingsRow(row: Record<string, unknown>): ClientOrchestrationSettings {
+  return {
+    clientId: String(row.client_id),
+    organizationId: String(row.organization_id),
+    tone: typeof row.tone === "string" ? row.tone : "professional-local-expert",
+    objectives: Array.isArray(row.objectives) ? row.objectives.map(String) : [],
+    photoAssetUrls: Array.isArray(row.photo_asset_urls) ? row.photo_asset_urls.map(String) : [],
+    sitemapUrl: typeof row.sitemap_url === "string" ? row.sitemap_url : null,
+    defaultPostUrl: typeof row.default_post_url === "string" ? row.default_post_url : null,
+    reviewReplyStyle: typeof row.review_reply_style === "string" ? row.review_reply_style : "balanced",
+    metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? nowIso())
   };
 }
 
@@ -384,6 +439,7 @@ export async function createClient(input: {
     };
     store.clients.set(id, client);
     store.autopilotPolicies.set(id, defaultPolicy(id));
+    store.orchestrationSettings.set(id, defaultOrchestrationSettings(id, input.organizationId));
     return client;
   }
 
@@ -404,6 +460,7 @@ export async function createClient(input: {
   }
 
   await getAutopilotPolicy(String(row.id));
+  await getClientOrchestrationSettings(String(row.id));
   return mapClientRow(row as Record<string, unknown>);
 }
 
@@ -423,6 +480,28 @@ export async function listClientsForOrg(organizationId: string): Promise<Client[
   }
 
   return (rows ?? []).map((row) => mapClientRow(row as Record<string, unknown>));
+}
+
+export async function getClientById(clientId: string): Promise<Client | null> {
+  if (!isSupabaseConfigured()) {
+    return getStore().clients.get(clientId) ?? null;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: row, error } = await supabase
+    .from("clients")
+    .select("id,organization_id,name,timezone,website_url,primary_location_label,created_at")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load client: ${error.message}`);
+  }
+
+  if (!row) {
+    return null;
+  }
+
+  return mapClientRow(row as Record<string, unknown>);
 }
 
 export async function createBlitzRun(input: {
@@ -853,6 +932,141 @@ export async function connectIntegration(input: {
   }
 
   return mapIntegrationRow(row as Record<string, unknown>);
+}
+
+export async function listClientIntegrations(clientId: string): Promise<IntegrationConnection[]> {
+  if (!isSupabaseConfigured()) {
+    return [...getStore().integrations.values()].filter((connection) => connection.clientId === clientId);
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: rows, error } = await supabase
+    .from("integration_connections")
+    .select(
+      "id,organization_id,client_id,provider,provider_account_id,scopes,encrypted_token_payload,metadata,token_expires_at,connected_at,last_refresh_at,is_active,created_at,updated_at"
+    )
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    throw new Error(`Failed to list client integrations: ${error.message}`);
+  }
+
+  return (rows ?? []).map((row) => mapIntegrationRow(row as Record<string, unknown>));
+}
+
+export async function upsertClientOrchestrationSettings(
+  clientId: string,
+  input: Omit<
+    ClientOrchestrationSettings,
+    "clientId" | "organizationId" | "createdAt" | "updatedAt"
+  >
+): Promise<ClientOrchestrationSettings> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const existing = store.orchestrationSettings.get(clientId);
+    const seeded = existing ?? defaultOrchestrationSettings(clientId);
+    const next: ClientOrchestrationSettings = {
+      ...seeded,
+      ...input,
+      updatedAt: nowIso()
+    };
+    store.orchestrationSettings.set(clientId, next);
+    return next;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: clientRow, error: clientError } = await supabase
+    .from("clients")
+    .select("organization_id")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (clientError || !clientRow) {
+    throw new Error(
+      `Failed to resolve client organization for orchestration settings ${clientId}: ${clientError?.message ?? "client not found"}`
+    );
+  }
+
+  const { data: row, error } = await supabase
+    .from("client_orchestration_settings")
+    .upsert(
+      {
+        organization_id: String(clientRow.organization_id),
+        client_id: clientId,
+        tone: input.tone,
+        objectives: input.objectives,
+        photo_asset_urls: input.photoAssetUrls,
+        sitemap_url: input.sitemapUrl,
+        default_post_url: input.defaultPostUrl,
+        review_reply_style: input.reviewReplyStyle,
+        metadata: input.metadata
+      },
+      {
+        onConflict: "client_id"
+      }
+    )
+    .select(
+      "organization_id,client_id,tone,objectives,photo_asset_urls,sitemap_url,default_post_url,review_reply_style,metadata,created_at,updated_at"
+    )
+    .single();
+  if (error || !row) {
+    throw new Error(`Failed to upsert orchestration settings: ${error?.message ?? "unknown error"}`);
+  }
+
+  return mapOrchestrationSettingsRow(row as Record<string, unknown>);
+}
+
+export async function getClientOrchestrationSettings(clientId: string): Promise<ClientOrchestrationSettings> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const existing = store.orchestrationSettings.get(clientId);
+    if (existing) {
+      return existing;
+    }
+    const seeded = defaultOrchestrationSettings(clientId);
+    store.orchestrationSettings.set(clientId, seeded);
+    return seeded;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: clientRow, error: clientError } = await supabase
+    .from("clients")
+    .select("organization_id")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (clientError || !clientRow) {
+    throw new Error(
+      `Failed to resolve client organization for orchestration settings ${clientId}: ${clientError?.message ?? "client not found"}`
+    );
+  }
+
+  const { data: row, error } = await supabase
+    .from("client_orchestration_settings")
+    .select(
+      "organization_id,client_id,tone,objectives,photo_asset_urls,sitemap_url,default_post_url,review_reply_style,metadata,created_at,updated_at"
+    )
+    .eq("client_id", clientId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to read orchestration settings: ${error.message}`);
+  }
+
+  if (!row) {
+    return upsertClientOrchestrationSettings(clientId, {
+      tone: "professional-local-expert",
+      objectives: [
+        "Increase local visibility",
+        "Improve review response velocity",
+        "Publish location-aware GBP content consistently"
+      ],
+      photoAssetUrls: [],
+      sitemapUrl: null,
+      defaultPostUrl: null,
+      reviewReplyStyle: "balanced",
+      metadata: {}
+    });
+  }
+
+  return mapOrchestrationSettingsRow(row as Record<string, unknown>);
 }
 
 export async function setRunStatus(runId: string, status: BlitzRunStatus): Promise<BlitzRun | null> {

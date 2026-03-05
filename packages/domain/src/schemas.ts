@@ -53,6 +53,16 @@ export const connectIntegrationSchema = z.object({
   metadata: z.record(z.unknown()).default({})
 });
 
+export const upsertClientOrchestrationSettingsSchema = z.object({
+  tone: z.string().min(2).max(120),
+  objectives: z.array(z.string().min(2).max(180)).min(1).max(20),
+  photoAssetUrls: z.array(z.string().url()).max(200),
+  sitemapUrl: z.string().url().nullable(),
+  defaultPostUrl: z.string().url().nullable(),
+  reviewReplyStyle: z.string().min(2).max(80),
+  metadata: z.record(z.unknown()).default({})
+});
+
 export const createApiKeySchema = z.object({
   name: z.string().min(2),
   scopes: z.array(z.string()).default([]),
@@ -65,4 +75,5 @@ export type CreateClientInput = z.infer<typeof createClientSchema>;
 export type CreateBlitzRunInput = z.infer<typeof createBlitzRunSchema>;
 export type UpsertAutopilotPolicyInput = z.infer<typeof upsertAutopilotPolicySchema>;
 export type ConnectIntegrationInput = z.infer<typeof connectIntegrationSchema>;
+export type UpsertClientOrchestrationSettingsInput = z.infer<typeof upsertClientOrchestrationSettingsSchema>;
 export type CreateApiKeyInput = z.infer<typeof createApiKeySchema>;
