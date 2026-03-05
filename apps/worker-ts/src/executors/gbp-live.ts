@@ -411,10 +411,16 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
 
     const payloadLocationNames = toStringArray(actionPayload.locationNames);
+    const metadataLocationNames = [
+      ...(typeof metadata.locationName === "string" ? [metadata.locationName] : []),
+      ...toStringArray(metadata.locationNames)
+    ];
     const filteredLocations =
       payloadLocationNames.length > 0
         ? locations.filter((location) => payloadLocationNames.includes(location.locationName))
-        : locations;
+        : metadataLocationNames.length > 0
+          ? locations.filter((location) => metadataLocationNames.includes(location.locationName))
+          : locations;
 
     return {
       locations: filteredLocations,
