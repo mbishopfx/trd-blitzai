@@ -8,10 +8,12 @@ import type {
   BlitzRunSummary
 } from "@trd-aiblitz/domain";
 import type {
+  ActionNeededRecord,
   ActionLogRecord,
   BlitzRunRepository,
   ClientMediaAssetRecord,
   ClientOrchestrationSettingsRecord,
+  CreateActionNeededInput,
   IntegrationConnectionPatch,
   IntegrationConnectionRecord,
   ReviewReplyHistoryRecord,
@@ -152,6 +154,32 @@ function mapClientMediaAssetRow(row: Record<string, unknown>): ClientMediaAssetR
     isAllowedForPosts: row.is_allowed_for_posts !== false,
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
     metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? nowIso())
+  };
+}
+
+function mapActionNeededRow(row: Record<string, unknown>): ActionNeededRecord {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    clientId: String(row.client_id),
+    runId: typeof row.run_id === "string" ? row.run_id : null,
+    sourceActionId: typeof row.source_action_id === "string" ? row.source_action_id : null,
+    provider: String(row.provider) as ActionNeededRecord["provider"],
+    locationName: typeof row.location_name === "string" ? row.location_name : null,
+    locationId: typeof row.location_id === "string" ? row.location_id : null,
+    actionType: String(row.action_type) as ActionNeededRecord["actionType"],
+    riskTier: String(row.risk_tier) as ActionNeededRecord["riskTier"],
+    title: String(row.title),
+    description: typeof row.description === "string" ? row.description : null,
+    status: String(row.status) as ActionNeededRecord["status"],
+    fingerprint: typeof row.fingerprint === "string" ? row.fingerprint : null,
+    payload: (row.payload as Record<string, unknown> | null) ?? {},
+    result: (row.result as Record<string, unknown> | null) ?? {},
+    approvedBy: typeof row.approved_by === "string" ? row.approved_by : null,
+    approvedAt: toIsoOrNull(row.approved_at),
+    executedAt: toIsoOrNull(row.executed_at),
     createdAt: String(row.created_at ?? nowIso()),
     updatedAt: String(row.updated_at ?? nowIso())
   };
@@ -604,6 +632,57 @@ export class SupabaseBlitzRepository implements BlitzRunRepository {
     if (error) {
       throw new Error(`Failed to write review reply history for ${input.reviewId}: ${error.message}`);
     }
+  }
+
+  async createActionNeeded(input: CreateActionNeededInput): Promise<ActionNeededRecord> {
+    if (input.fingerprint) {
+      const { data: existing, error: existingError } = await this.supabase
+        .from("client_actions_needed")
+        .select(
+          "id,organization_id,client_id,run_id,source_action_id,provider,location_name,location_id,action_type,risk_tier,title,description,status,fingerprint,payload,result,approved_by,approved_at,executed_at,created_at,updated_at"
+        )
+        .eq("client_id", input.clientId)
+        .eq("status", "pending")
+        .eq("fingerprint", input.fingerprint)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (existingError) {
+        throw new Error(`Failed to query existing actions-needed item: ${existingError.message}`);
+      }
+      if (existing) {
+        return mapActionNeededRow(existing as Record<string, unknown>);
+      }
+    }
+
+    const { data: inserted, error } = await this.supabase
+      .from("client_actions_needed")
+      .insert({
+        organization_id: input.organizationId,
+        client_id: input.clientId,
+        run_id: input.runId ?? null,
+        source_action_id: input.sourceActionId ?? null,
+        provider: input.provider,
+        location_name: input.locationName ?? null,
+        location_id: input.locationId ?? null,
+        action_type: input.actionType,
+        risk_tier: input.riskTier,
+        title: input.title,
+        description: input.description ?? null,
+        status: "pending",
+        fingerprint: input.fingerprint ?? null,
+        payload: input.payload ?? {},
+        result: {}
+      })
+      .select(
+        "id,organization_id,client_id,run_id,source_action_id,provider,location_name,location_id,action_type,risk_tier,title,description,status,fingerprint,payload,result,approved_by,approved_at,executed_at,created_at,updated_at"
+      )
+      .single();
+    if (error || !inserted) {
+      throw new Error(`Failed to insert actions-needed item: ${error?.message ?? "unknown error"}`);
+    }
+
+    return mapActionNeededRow(inserted as Record<string, unknown>);
   }
 
   private async getRunIdentity(runId: string): Promise<{ organizationId: string; clientId: string }> {

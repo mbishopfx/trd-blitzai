@@ -87,6 +87,30 @@ export interface ClientMediaAsset {
   updatedAt: string;
 }
 
+export interface ClientActionNeeded {
+  id: string;
+  organizationId: string;
+  clientId: string;
+  runId: string | null;
+  sourceActionId: string | null;
+  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  locationName: string | null;
+  locationId: string | null;
+  actionType: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
+  riskTier: "low" | "medium" | "high" | "critical";
+  title: string;
+  description: string | null;
+  status: "pending" | "approved" | "executed" | "failed" | "dismissed" | "manual_completed";
+  fingerprint: string | null;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown>;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  executedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RollbackRecord {
   id: string;
   runId: string;
@@ -103,6 +127,7 @@ interface Store {
   autopilotPolicies: Map<string, BlitzAutopilotPolicy>;
   orchestrationSettings: Map<string, ClientOrchestrationSettings>;
   mediaAssets: Map<string, ClientMediaAsset>;
+  actionsNeeded: Map<string, ClientActionNeeded>;
   integrations: Map<string, IntegrationConnection>;
   rollbacks: Map<string, RollbackRecord>;
   attribution: DailyChannelMetric[];
@@ -142,6 +167,7 @@ function getStore(): Store {
       autopilotPolicies: new Map(),
       orchestrationSettings: new Map(),
       mediaAssets: new Map(),
+      actionsNeeded: new Map(),
       integrations: new Map(),
       rollbacks: new Map(),
       attribution: []
@@ -331,6 +357,32 @@ function mapClientMediaAssetRow(row: Record<string, unknown>): ClientMediaAsset 
     isAllowedForPosts: row.is_allowed_for_posts !== false,
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
     metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? nowIso())
+  };
+}
+
+function mapClientActionNeededRow(row: Record<string, unknown>): ClientActionNeeded {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    clientId: String(row.client_id),
+    runId: typeof row.run_id === "string" ? row.run_id : null,
+    sourceActionId: typeof row.source_action_id === "string" ? row.source_action_id : null,
+    provider: String(row.provider) as ClientActionNeeded["provider"],
+    locationName: typeof row.location_name === "string" ? row.location_name : null,
+    locationId: typeof row.location_id === "string" ? row.location_id : null,
+    actionType: String(row.action_type) as ClientActionNeeded["actionType"],
+    riskTier: String(row.risk_tier) as ClientActionNeeded["riskTier"],
+    title: String(row.title),
+    description: typeof row.description === "string" ? row.description : null,
+    status: String(row.status) as ClientActionNeeded["status"],
+    fingerprint: typeof row.fingerprint === "string" ? row.fingerprint : null,
+    payload: (row.payload as Record<string, unknown> | null) ?? {},
+    result: (row.result as Record<string, unknown> | null) ?? {},
+    approvedBy: typeof row.approved_by === "string" ? row.approved_by : null,
+    approvedAt: toIsoOrNull(row.approved_at),
+    executedAt: toIsoOrNull(row.executed_at),
     createdAt: String(row.created_at ?? nowIso()),
     updatedAt: String(row.updated_at ?? nowIso())
   };
@@ -581,6 +633,11 @@ export async function deleteClientById(
     for (const [integrationId, integration] of store.integrations.entries()) {
       if (integration.clientId === clientId) {
         store.integrations.delete(integrationId);
+      }
+    }
+    for (const [taskId, task] of store.actionsNeeded.entries()) {
+      if (task.clientId === clientId) {
+        store.actionsNeeded.delete(taskId);
       }
     }
     for (const [runId, run] of store.runs.entries()) {
@@ -1227,6 +1284,127 @@ export async function deleteClientMediaAsset(assetId: string): Promise<{ deleted
     throw new Error(`Failed to delete client media asset: ${error.message}`);
   }
   return { deleted: true };
+}
+
+export async function listClientActionsNeeded(
+  clientId: string,
+  options?: { status?: ClientActionNeeded["status"] | "all"; limit?: number }
+): Promise<ClientActionNeeded[]> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 100, 500));
+
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const rows = [...store.actionsNeeded.values()].filter((item) => item.clientId === clientId);
+    const filtered =
+      options?.status && options.status !== "all"
+        ? rows.filter((item) => item.status === options.status)
+        : rows;
+    return filtered
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
+  }
+
+  const supabase = getSupabaseServiceClient();
+  let query = supabase
+    .from("client_actions_needed")
+    .select(
+      "id,organization_id,client_id,run_id,source_action_id,provider,location_name,location_id,action_type,risk_tier,title,description,status,fingerprint,payload,result,approved_by,approved_at,executed_at,created_at,updated_at"
+    )
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (options?.status && options.status !== "all") {
+    query = query.eq("status", options.status);
+  }
+
+  const { data: rows, error } = await query;
+  if (error) {
+    throw new Error(`Failed to list client actions-needed queue: ${error.message}`);
+  }
+  return (rows ?? []).map((row) => mapClientActionNeededRow(row as Record<string, unknown>));
+}
+
+export async function getClientActionNeededById(actionNeededId: string): Promise<ClientActionNeeded | null> {
+  if (!isSupabaseConfigured()) {
+    return getStore().actionsNeeded.get(actionNeededId) ?? null;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: row, error } = await supabase
+    .from("client_actions_needed")
+    .select(
+      "id,organization_id,client_id,run_id,source_action_id,provider,location_name,location_id,action_type,risk_tier,title,description,status,fingerprint,payload,result,approved_by,approved_at,executed_at,created_at,updated_at"
+    )
+    .eq("id", actionNeededId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load actions-needed item: ${error.message}`);
+  }
+
+  return row ? mapClientActionNeededRow(row as Record<string, unknown>) : null;
+}
+
+export async function updateClientActionNeeded(
+  actionNeededId: string,
+  patch: {
+    status?: ClientActionNeeded["status"];
+    result?: Record<string, unknown>;
+    approvedBy?: string | null;
+    approvedAt?: string | null;
+    executedAt?: string | null;
+  }
+): Promise<ClientActionNeeded | null> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const current = store.actionsNeeded.get(actionNeededId);
+    if (!current) {
+      return null;
+    }
+    const next: ClientActionNeeded = {
+      ...current,
+      status: patch.status ?? current.status,
+      result: patch.result ?? current.result,
+      approvedBy: patch.approvedBy ?? current.approvedBy,
+      approvedAt: patch.approvedAt ?? current.approvedAt,
+      executedAt: patch.executedAt ?? current.executedAt,
+      updatedAt: nowIso()
+    };
+    store.actionsNeeded.set(actionNeededId, next);
+    return next;
+  }
+
+  const updatePatch: Record<string, unknown> = {};
+  if (patch.status !== undefined) {
+    updatePatch.status = patch.status;
+  }
+  if (patch.result !== undefined) {
+    updatePatch.result = patch.result;
+  }
+  if (patch.approvedBy !== undefined) {
+    updatePatch.approved_by = patch.approvedBy;
+  }
+  if (patch.approvedAt !== undefined) {
+    updatePatch.approved_at = patch.approvedAt;
+  }
+  if (patch.executedAt !== undefined) {
+    updatePatch.executed_at = patch.executedAt;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: row, error } = await supabase
+    .from("client_actions_needed")
+    .update(updatePatch)
+    .eq("id", actionNeededId)
+    .select(
+      "id,organization_id,client_id,run_id,source_action_id,provider,location_name,location_id,action_type,risk_tier,title,description,status,fingerprint,payload,result,approved_by,approved_at,executed_at,created_at,updated_at"
+    )
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to update actions-needed item: ${error.message}`);
+  }
+
+  return row ? mapClientActionNeededRow(row as Record<string, unknown>) : null;
 }
 
 export async function upsertClientOrchestrationSettings(

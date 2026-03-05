@@ -83,6 +83,11 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         detail: "Runs, actions, and rollback"
       },
       {
+        href: `/dashboard/clients/${clientId}/actions-needed`,
+        label: "Actions Needed",
+        detail: "Approve or manually complete risky changes"
+      },
+      {
         href: `/dashboard/clients/${clientId}/reviews`,
         label: "Reviews",
         detail: "Live reviews and auto-replies"

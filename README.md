@@ -32,6 +32,9 @@ Enterprise autonomous GBP optimization platform with policy-gated execution, att
 - `GET /api/v1/clients/{clientId}/attribution`
 - `POST /api/v1/clients/{clientId}/integrations/ga4/connect`
 - `POST /api/v1/clients/{clientId}/integrations/google-ads/connect`
+- `GET /api/v1/clients/{clientId}/actions-needed`
+- `PATCH /api/v1/clients/{clientId}/actions-needed/{actionNeededId}`
+- `POST /api/v1/clients/{clientId}/actions-needed/{actionNeededId}/approve`
 
 ### Worker Event Contracts (`packages/domain`)
 
@@ -49,6 +52,7 @@ Enterprise autonomous GBP optimization platform with policy-gated execution, att
 - Deterministic idempotency keys.
 - Retry/backoff for action execution.
 - Critical-failure rollback coordinator for reversible actions.
+- Risky completeness/profile mutations default to approval queue (`Actions Needed`) before execution.
 - BullMQ queue mode (Redis) and in-process fallback mode.
 - Supabase-backed worker repository for persistent run/action state in production.
 

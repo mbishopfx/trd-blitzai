@@ -330,6 +330,19 @@ function hashStringToNumber(value: string): number {
   return hash;
 }
 
+function buildFingerprint(input: {
+  clientId: string;
+  locationName: string;
+  objective: string;
+  updateMask: string[];
+  patch: Record<string, unknown>;
+}): string {
+  const sortedMask = [...input.updateMask].sort();
+  const patchJson = JSON.stringify(input.patch, Object.keys(input.patch).sort());
+  const raw = `${input.clientId}|${input.locationName}|${input.objective}|${sortedMask.join(",")}|${patchJson}`;
+  return `${hashStringToNumber(raw)}`;
+}
+
 function parseJsonObjectFromText(value: string): Record<string, unknown> | null {
   const attempts = [
     value.trim(),
@@ -2050,6 +2063,61 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     return rows;
   }
 
+  private shouldAutoApplyRiskyChanges(context: RunContext): boolean {
+    const metadata = asRecord(context.settings.metadata);
+    return metadata.allowAutoApplyRiskyPatches === true;
+  }
+
+  private async queueActionNeeded(input: {
+    action: BlitzAction;
+    organizationId: string;
+    clientId: string;
+    location: ResolvedLocation;
+    title: string;
+    description: string;
+    patch: Record<string, unknown>;
+    updateMask: string[];
+    objective: string;
+    actionType?: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
+    riskTier?: "low" | "medium" | "high" | "critical";
+    metadata?: Record<string, unknown>;
+  }): Promise<string> {
+    const payload: Record<string, unknown> = {
+      objective: input.objective,
+      locationName: input.location.locationName,
+      locationId: input.location.locationId,
+      patch: input.patch,
+      updateMask: input.updateMask,
+      ...(input.metadata ?? {})
+    };
+
+    const fingerprint = buildFingerprint({
+      clientId: input.clientId,
+      locationName: input.location.locationName,
+      objective: input.objective,
+      updateMask: input.updateMask,
+      patch: input.patch
+    });
+
+    const created = await this.deps.repository.createActionNeeded({
+      organizationId: input.organizationId,
+      clientId: input.clientId,
+      runId: input.action.runId,
+      sourceActionId: input.action.id,
+      provider: "gbp",
+      locationName: input.location.locationName,
+      locationId: input.location.locationId,
+      actionType: input.actionType ?? "profile_patch",
+      riskTier: input.riskTier ?? "high",
+      title: input.title,
+      description: input.description,
+      fingerprint,
+      payload
+    });
+
+    return created.id;
+  }
+
   private async executeProfilePatch(input: {
     action: BlitzAction;
     context: RunContext;
@@ -2089,7 +2157,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
 
     if (input.objective === "ai_description_qna_optimization") {
+      const autoApplyRisky = this.shouldAutoApplyRiskyChanges(input.context);
       const patched: Array<Record<string, unknown>> = [];
+      const queued: Array<Record<string, unknown>> = [];
       const skipped: Array<Record<string, unknown>> = [];
       const failed: Array<Record<string, unknown>> = [];
       const warnings = [...input.context.warnings];
@@ -2136,16 +2206,54 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           continue;
         }
 
-        try {
-          await input.context.client.patchLocation(
-            location.locationName,
-            {
-              profile: {
-                description: nextDescription
+        const patch = {
+          profile: {
+            description: nextDescription
+          }
+        };
+        const updateMaskForDescription = ["profile"];
+
+        if (!autoApplyRisky) {
+          try {
+            const actionNeededId = await this.queueActionNeeded({
+              action: input.action,
+              organizationId: input.action.organizationId ?? input.context.connection.organizationId,
+              clientId: input.action.clientId ?? input.context.connection.clientId,
+              location,
+              objective: input.objective,
+              title: "Approve GBP profile description optimization",
+              description:
+                "Worker generated a new hyperlocal GBP description and Q&A recommendations. Approve to apply the description patch.",
+              patch,
+              updateMask: updateMaskForDescription,
+              riskTier: "high",
+              metadata: {
+                competitorCount: competitors.length,
+                previousDescriptionLength: currentDescription.length,
+                nextDescriptionLength: nextDescription.length,
+                qaPairs: suggestions.qaPairs,
+                suggestedCategories: suggestions.suggestedCategories,
+                suggestedServices: suggestions.suggestedServices,
+                suggestedProducts: suggestions.suggestedProducts,
+                suggestedAttributes: suggestions.suggestedAttributes
               }
-            },
-            ["profile"]
-          );
+            });
+            queued.push({
+              actionNeededId,
+              locationName: location.locationName,
+              title: snapshot.title ?? location.title
+            });
+          } catch (error) {
+            failed.push({
+              locationName: location.locationName,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          continue;
+        }
+
+        try {
+          await input.context.client.patchLocation(location.locationName, patch, updateMaskForDescription);
           patched.push({
             locationName: location.locationName,
             title: snapshot.title ?? location.title,
@@ -2167,7 +2275,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
 
       return {
         objective: input.objective,
+        autoApplyRiskyChanges: autoApplyRisky,
         patchedLocations: patched,
+        queuedApprovals: queued,
         skippedLocations: skipped,
         failedLocations: failed,
         qaOptimization: {
@@ -2230,11 +2340,13 @@ export class GbpLiveActionExecutor implements ActionExecutor {
 
     if (objective === "auto_fill_profile_fields") {
       const applyRecommendations = input.action.payload.applyRecommendations !== false;
+      const autoApplyRisky = this.shouldAutoApplyRiskyChanges(input.context);
       const explicitHours = asRecord(input.action.payload.defaultRegularHours);
       const metadataHours = asRecord(asRecord(input.context.settings.metadata).defaultRegularHours);
       const defaultHours = Object.keys(explicitHours).length ? explicitHours : metadataHours;
 
       const patched: Array<Record<string, unknown>> = [];
+      const queued: Array<Record<string, unknown>> = [];
       const skipped: Array<Record<string, unknown>> = [];
       const failed: Array<Record<string, unknown>> = [];
       const warnings = [...input.context.warnings];
@@ -2324,6 +2436,51 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           continue;
         }
 
+        if (!autoApplyRisky) {
+          try {
+            const actionNeededId = await this.queueActionNeeded({
+              action: input.action,
+              organizationId: input.action.organizationId ?? input.context.connection.organizationId,
+              clientId: input.action.clientId ?? input.context.connection.clientId,
+              location,
+              objective,
+              actionType: "attribute_update",
+              title: "Approve GBP completeness auto-fill patch",
+              description:
+                "Worker prepared GBP profile/category/hours/website updates. Approve to apply this patch, or complete manually and mark done.",
+              patch,
+              updateMask: dedupedMask,
+              riskTier: "high",
+              metadata: {
+                unavailableWrites,
+                suggestions: {
+                  usps: suggestions.usps,
+                  categories: suggestions.suggestedCategories,
+                  services: suggestions.suggestedServices,
+                  products: suggestions.suggestedProducts,
+                  attributes: suggestions.suggestedAttributes,
+                  hoursRecommendations: suggestions.hoursRecommendations,
+                  qaPairs: suggestions.qaPairs
+                }
+              }
+            });
+            queued.push({
+              actionNeededId,
+              locationName: location.locationName,
+              title: snapshot.title ?? location.title,
+              updateMask: dedupedMask
+            });
+          } catch (error) {
+            failed.push({
+              locationName: location.locationName,
+              updateMask: dedupedMask,
+              error: error instanceof Error ? error.message : String(error),
+              unavailableWrites
+            });
+          }
+          continue;
+        }
+
         try {
           await input.context.client.patchLocation(location.locationName, patch, dedupedMask);
           patched.push({
@@ -2358,7 +2515,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       return {
         objective,
         applyRecommendations,
+        autoApplyRiskyChanges: autoApplyRisky,
         patchedLocations: patched,
+        queuedApprovals: queued,
         skippedLocations: skipped,
         failedLocations: failed,
         warnings

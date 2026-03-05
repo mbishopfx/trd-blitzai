@@ -9,9 +9,11 @@ import type {
   PolicyDecision
 } from "@trd-aiblitz/domain";
 import type {
+  ActionNeededRecord,
   ActionLogRecord,
   BlitzRunRepository,
   ClientMediaAssetRecord,
+  CreateActionNeededInput,
   ClientOrchestrationSettingsRecord,
   IntegrationConnectionPatch,
   IntegrationConnectionRecord,
@@ -25,6 +27,7 @@ interface InMemoryState {
   policies: Map<string, BlitzAutopilotPolicy>;
   orchestrationSettings: Map<string, ClientOrchestrationSettingsRecord>;
   mediaAssets: Map<string, ClientMediaAssetRecord>;
+  actionsNeeded: Map<string, ActionNeededRecord>;
   reviewReplies: Map<string, ReviewReplyHistoryRecord>;
   logs: ActionLogRecord[];
   rollbacks: RollbackRecord[];
@@ -98,6 +101,7 @@ export class InMemoryBlitzRepository implements BlitzRunRepository {
         (seed?.orchestrationSettings ?? []).map((settings) => [settings.clientId, settings])
       ),
       mediaAssets: new Map((seed?.mediaAssets ?? []).map((asset) => [asset.id, asset])),
+      actionsNeeded: new Map(),
       reviewReplies: new Map(),
       logs: [],
       rollbacks: [],
@@ -268,6 +272,47 @@ export class InMemoryBlitzRepository implements BlitzRunRepository {
   async recordReviewReplyHistory(input: ReviewReplyHistoryRecord): Promise<void> {
     const key = `${input.clientId}:${input.reviewId}`;
     this.state.reviewReplies.set(key, input);
+  }
+
+  async createActionNeeded(input: CreateActionNeededInput): Promise<ActionNeededRecord> {
+    const record: ActionNeededRecord = {
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      clientId: input.clientId,
+      runId: input.runId ?? null,
+      sourceActionId: input.sourceActionId ?? null,
+      provider: input.provider,
+      locationName: input.locationName ?? null,
+      locationId: input.locationId ?? null,
+      actionType: input.actionType,
+      riskTier: input.riskTier,
+      title: input.title,
+      description: input.description ?? null,
+      status: "pending",
+      fingerprint: input.fingerprint ?? null,
+      payload: input.payload ?? {},
+      result: {},
+      approvedBy: null,
+      approvedAt: null,
+      executedAt: null,
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+
+    if (record.fingerprint) {
+      const existing = [...this.state.actionsNeeded.values()].find(
+        (entry) =>
+          entry.clientId === record.clientId &&
+          entry.status === "pending" &&
+          entry.fingerprint === record.fingerprint
+      );
+      if (existing) {
+        return existing;
+      }
+    }
+
+    this.state.actionsNeeded.set(record.id, record);
+    return record;
   }
 
   seedRun(run: BlitzRun): void {

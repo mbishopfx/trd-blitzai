@@ -137,6 +137,46 @@ export interface ReviewReplyHistoryRecord {
   error?: string | null;
 }
 
+export interface ActionNeededRecord {
+  id: string;
+  organizationId: string;
+  clientId: string;
+  runId: string | null;
+  sourceActionId: string | null;
+  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  locationName: string | null;
+  locationId: string | null;
+  actionType: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
+  riskTier: "low" | "medium" | "high" | "critical";
+  title: string;
+  description: string | null;
+  status: "pending" | "approved" | "executed" | "failed" | "dismissed" | "manual_completed";
+  fingerprint: string | null;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown>;
+  approvedBy: string | null;
+  approvedAt: string | null;
+  executedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateActionNeededInput {
+  organizationId: string;
+  clientId: string;
+  runId?: string | null;
+  sourceActionId?: string | null;
+  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  locationName?: string | null;
+  locationId?: string | null;
+  actionType: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
+  riskTier: "low" | "medium" | "high" | "critical";
+  title: string;
+  description?: string | null;
+  fingerprint?: string | null;
+  payload?: Record<string, unknown>;
+}
+
 export interface BlitzRunRepository {
   getRun(runId: string): Promise<BlitzRun | null>;
   listActions(runId: string): Promise<BlitzAction[]>;
@@ -172,6 +212,7 @@ export interface BlitzRunRepository {
   listClientMediaAssets(clientId: string): Promise<ClientMediaAssetRecord[]>;
   hasPostedReplyHistory(clientId: string, reviewId: string): Promise<boolean>;
   recordReviewReplyHistory(input: ReviewReplyHistoryRecord): Promise<void>;
+  createActionNeeded(input: CreateActionNeededInput): Promise<ActionNeededRecord>;
 }
 
 export interface OrchestratorOptions {

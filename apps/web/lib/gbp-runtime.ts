@@ -100,7 +100,10 @@ function toneAdjustedReply(input: { baseReply: string; style: string }): string 
   return base;
 }
 
-async function resolveRuntimeContext(clientId: string): Promise<RuntimeContext> {
+async function resolveRuntimeContext(
+  clientId: string,
+  options?: { locationName?: string | null; locationId?: string | null; accountName?: string | null }
+): Promise<RuntimeContext> {
   if (!isSupabaseConfigured()) {
     throw new Error("Supabase credentials are required for live GBP operations");
   }
@@ -190,15 +193,22 @@ async function resolveRuntimeContext(clientId: string): Promise<RuntimeContext> 
   const client = new GbpApiClient(token.accessToken);
   const metadata = (connectionRow.metadata as Record<string, unknown> | null) ?? {};
 
-  const { data: locationRow } = await supabase
+  let locationQuery = supabase
     .from("gbp_locations")
     .select("account_name,account_id,location_name,location_id,title")
     .eq("client_id", clientId)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+  if (options?.locationName) {
+    locationQuery = locationQuery.eq("location_name", options.locationName);
+  } else if (options?.locationId) {
+    locationQuery = locationQuery.eq("location_id", options.locationId);
+  }
+
+  const { data: locationRow } = await locationQuery.maybeSingle();
 
   let accountName =
+    (typeof options?.accountName === "string" && options.accountName.trim() ? options.accountName.trim() : null) ||
     (typeof locationRow?.account_name === "string" && locationRow.account_name) ||
     (typeof connectionRow.provider_account_id === "string" && connectionRow.provider_account_id.startsWith("accounts/")
       ? connectionRow.provider_account_id
@@ -206,8 +216,9 @@ async function resolveRuntimeContext(clientId: string): Promise<RuntimeContext> 
     (typeof metadata.accountName === "string" ? metadata.accountName : null) ||
     "";
 
-  let locationName = (typeof locationRow?.location_name === "string" && locationRow.location_name) || "";
+  let locationName = (typeof options?.locationName === "string" && options.locationName) || (typeof locationRow?.location_name === "string" && locationRow.location_name) || "";
   let locationTitle = (typeof locationRow?.title === "string" && locationRow.title) || "";
+  let locationId = (typeof options?.locationId === "string" && options.locationId) || (typeof locationRow?.location_id === "string" && locationRow.location_id) || "";
 
   if (!accountName || !locationName) {
     const accounts = await client.listAccounts();
@@ -224,10 +235,13 @@ async function resolveRuntimeContext(clientId: string): Promise<RuntimeContext> 
       throw new Error(`No locations found for GBP account ${accountName}`);
     }
 
-    const matched = locationName ? locations.find((loc) => loc.name === locationName) : null;
+    const matched =
+      (locationName ? locations.find((loc) => loc.name === locationName) : null) ??
+      (locationId ? locations.find((loc) => parseLocationId(loc.name) === locationId) : null);
     const selected = matched ?? locations[0];
     locationName = selected.name;
     locationTitle = selected.title ?? locationTitle;
+    locationId = parseLocationId(selected.name);
   }
 
   return {
@@ -236,7 +250,7 @@ async function resolveRuntimeContext(clientId: string): Promise<RuntimeContext> 
     accountName,
     accountId: (typeof locationRow?.account_id === "string" && locationRow.account_id) || parseAccountId(accountName),
     locationName,
-    locationId: (typeof locationRow?.location_id === "string" && locationRow.location_id) || parseLocationId(locationName),
+    locationId: locationId || parseLocationId(locationName),
     locationTitle: locationTitle || locationName,
     token,
     client
@@ -463,5 +477,46 @@ export async function autoReplyClientReviews(input: {
     posted,
     skipped,
     failed
+  };
+}
+
+export async function applyClientGbpPatch(input: {
+  clientId: string;
+  locationName?: string | null;
+  locationId?: string | null;
+  accountName?: string | null;
+  patch: Record<string, unknown>;
+  updateMask: string[];
+}): Promise<{
+  location: { accountName: string; accountId: string; locationName: string; locationId: string; locationTitle: string };
+  updateMask: string[];
+  executedAt: string;
+}> {
+  const dedupedMask = [...new Set(input.updateMask.map((entry) => entry.trim()).filter(Boolean))];
+  if (!dedupedMask.length) {
+    throw new Error("updateMask is required to apply GBP patch");
+  }
+  if (!input.patch || typeof input.patch !== "object" || Array.isArray(input.patch)) {
+    throw new Error("patch payload must be an object");
+  }
+
+  const runtime = await resolveRuntimeContext(input.clientId, {
+    locationName: input.locationName,
+    locationId: input.locationId,
+    accountName: input.accountName
+  });
+
+  await runtime.client.patchLocation(runtime.locationName, input.patch, dedupedMask);
+
+  return {
+    location: {
+      accountName: runtime.accountName,
+      accountId: runtime.accountId,
+      locationName: runtime.locationName,
+      locationId: runtime.locationId,
+      locationTitle: runtime.locationTitle
+    },
+    updateMask: dedupedMask,
+    executedAt: new Date().toISOString()
   };
 }
