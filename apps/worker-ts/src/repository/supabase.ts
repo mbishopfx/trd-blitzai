@@ -260,7 +260,19 @@ export class SupabaseBlitzRepository implements BlitzRunRepository {
 
     if (!data) {
       const seeded = defaultPolicy(clientId);
+      const { data: clientRow, error: clientError } = await this.supabase
+        .from("clients")
+        .select("organization_id")
+        .eq("id", clientId)
+        .maybeSingle();
+      if (clientError || !clientRow) {
+        throw new Error(
+          `Failed to resolve client organization for autopilot policy seed ${clientId}: ${clientError?.message ?? "client not found"}`
+        );
+      }
+
       const { error: insertError } = await this.supabase.from("autopilot_policies").insert({
+        organization_id: String(clientRow.organization_id),
         client_id: seeded.clientId,
         max_daily_actions_per_location: seeded.maxDailyActionsPerLocation,
         max_actions_per_phase: seeded.maxActionsPerPhase,
