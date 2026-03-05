@@ -52,6 +52,14 @@ interface TinyUrlResult {
   error?: string;
 }
 
+interface GeneratedPostCopy {
+  longForm: string;
+  snippet: string;
+  provider: "gemini" | "template";
+  model: string | null;
+  warning?: string;
+}
+
 interface ExecutorOptions {
   maxPostBurst: number;
   maxReviewRepliesPerAction: number;
@@ -273,6 +281,44 @@ function hashStringToNumber(value: string): number {
     hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
   }
   return hash;
+}
+
+function parseJsonObjectFromText(value: string): Record<string, unknown> | null {
+  const attempts = [
+    value.trim(),
+    value
+      .replace(/^```json/i, "")
+      .replace(/^```/i, "")
+      .replace(/```$/i, "")
+      .trim()
+  ].filter(Boolean);
+
+  for (const candidate of attempts) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Continue trying fallback extraction paths.
+    }
+  }
+
+  const start = value.indexOf("{");
+  const end = value.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const subset = value.slice(start, end + 1);
+    try {
+      const parsed = JSON.parse(subset);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function mediaUrlFromAsset(asset: ClientMediaAssetRecord): string | null {
@@ -1059,6 +1105,202 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
   }
 
+  private buildGeminiPrompt(input: {
+    locationTitle: string;
+    objective: string;
+    tone: string;
+    wordRange: { min: number; max: number };
+    landingUrl: string;
+    shortUrl: string;
+    pageContext: LandingPageContext;
+    objectives: string[];
+  }): string {
+    const pageTitle = input.pageContext.pageTitle ?? "N/A";
+    const pageH1 = input.pageContext.h1 ?? "N/A";
+    const metaDescription = input.pageContext.metaDescription ?? "N/A";
+    const firstParagraph = input.pageContext.firstParagraph ?? "N/A";
+    const businessObjectives = input.objectives.length ? input.objectives.join("; ") : "Increase local visibility and conversions";
+
+    return [
+      "You are a senior local SEO content writer producing GBP post copy.",
+      "Write natural, humanized copy with no robotic filler and no hype.",
+      "",
+      "Return STRICT JSON only with this exact shape:",
+      "{",
+      '  "longForm": "string",',
+      '  "snippet": "string"',
+      "}",
+      "",
+      "Rules:",
+      `- longForm must be between ${input.wordRange.min} and ${input.wordRange.max} words.`,
+      "- snippet must be <= 1450 characters and ready to publish as GBP post summary.",
+      "- Format longForm using readable markdown sections and short paragraphs.",
+      "- Include one compact bullet list under a section named Structured Snippet.",
+      "- Keep tone professional, local-expert, and conversational.",
+      "- Anchor the post semantically to the landing page topic and user intent.",
+      "- Include a clear conversion CTA with the short URL.",
+      "- Do not use emojis.",
+      "",
+      "Context:",
+      `- Business: ${input.locationTitle}`,
+      `- Objective: ${input.objective}`,
+      `- Tone: ${input.tone}`,
+      `- Landing URL: ${input.landingUrl}`,
+      `- Short URL: ${input.shortUrl}`,
+      `- Page title: ${pageTitle}`,
+      `- Page H1: ${pageH1}`,
+      `- Meta description: ${metaDescription}`,
+      `- First paragraph: ${firstParagraph}`,
+      `- Business objectives: ${businessObjectives}`,
+      "",
+      "Output requirements:",
+      "- longForm should read like a polished local service update and align with AI retrieval relevance (EEAT, factual clarity, local intent).",
+      "- snippet should be concise, actionable, and optimized for GBP readability with the short URL.",
+      "",
+      "Now return JSON only."
+    ].join("\n");
+  }
+
+  private async generatePostCopy(input: {
+    locationTitle: string;
+    objective: string;
+    ordinal: number;
+    tone: string;
+    wordRange: { min: number; max: number };
+    landingUrl: string;
+    shortUrl: string;
+    pageContext: LandingPageContext;
+    objectives: string[];
+    ctaUrl?: string | null;
+  }): Promise<GeneratedPostCopy> {
+    const fallback = buildEeatLongFormPost({
+      locationTitle: input.locationTitle,
+      objective: input.objective,
+      ordinal: input.ordinal,
+      tone: input.tone,
+      wordRange: input.wordRange,
+      landingUrl: input.landingUrl,
+      shortUrl: input.shortUrl,
+      pageContext: input.pageContext,
+      ctaUrl: input.ctaUrl
+    });
+
+    const apiKey =
+      process.env.GEMINI_API_KEY?.trim() ??
+      process.env.GOOGLE_AI_STUDIO_API_KEY?.trim() ??
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ??
+      null;
+    const model = process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
+
+    if (!apiKey) {
+      return {
+        longForm: fallback.longForm,
+        snippet: fallback.snippet,
+        provider: "template",
+        model: null,
+        warning: "Gemini API key is not configured. Falling back to deterministic template output."
+      };
+    }
+
+    try {
+      const prompt = this.buildGeminiPrompt({
+        locationTitle: input.locationTitle,
+        objective: input.objective,
+        tone: input.tone,
+        wordRange: input.wordRange,
+        landingUrl: input.landingUrl,
+        shortUrl: input.shortUrl,
+        pageContext: input.pageContext,
+        objectives: input.objectives
+      });
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: prompt }]
+              }
+            ],
+            generationConfig: {
+              temperature: 0.7,
+              topP: 0.9,
+              maxOutputTokens: 2200
+            }
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const responseText = await response.text().catch(() => "");
+        return {
+          longForm: fallback.longForm,
+          snippet: fallback.snippet,
+          provider: "template",
+          model,
+          warning: `Gemini API returned ${response.status}: ${responseText.slice(0, 220)}`
+        };
+      }
+
+      const payload = (await response.json()) as {
+        candidates?: Array<{
+          content?: {
+            parts?: Array<{ text?: string }>;
+          };
+        }>;
+      };
+
+      const rawText = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("\n").trim() ?? "";
+      const parsed = parseJsonObjectFromText(rawText);
+      const modelLongForm = parsed && typeof parsed.longForm === "string" ? parsed.longForm.trim() : "";
+      const modelSnippet = parsed && typeof parsed.snippet === "string" ? parsed.snippet.trim() : "";
+
+      if (!modelLongForm || !modelSnippet) {
+        return {
+          longForm: fallback.longForm,
+          snippet: fallback.snippet,
+          provider: "template",
+          model,
+          warning: "Gemini response did not provide valid JSON longForm/snippet."
+        };
+      }
+
+      let longForm = modelLongForm;
+      if (wordCount(longForm) < input.wordRange.min) {
+        longForm = fallback.longForm;
+      }
+      if (wordCount(longForm) > input.wordRange.max) {
+        longForm = truncateToMaxWords(longForm, input.wordRange.max);
+      }
+
+      let snippet = modelSnippet.slice(0, 1450);
+      if (!snippet.includes(input.shortUrl)) {
+        snippet = `${snippet} Learn more: ${input.shortUrl}`.slice(0, 1450);
+      }
+
+      return {
+        longForm,
+        snippet,
+        provider: "gemini",
+        model
+      };
+    } catch (error) {
+      return {
+        longForm: fallback.longForm,
+        snippet: fallback.snippet,
+        provider: "template",
+        model,
+        warning: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
   private async executeProfilePatch(input: {
     action: BlitzAction;
     context: RunContext;
@@ -1264,7 +1506,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         mediaGenerationError = mediaResult.error;
       }
 
-      const eeatDraft = buildEeatLongFormPost({
+      const generatedCopy = await this.generatePostCopy({
         locationTitle: location.title ?? "our business",
         objective: input.objective,
         ordinal: index + 1,
@@ -1276,10 +1518,16 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         landingUrl: landing.landingUrl,
         shortUrl: tinyUrlResult.tinyUrl,
         pageContext,
+        objectives: input.context.settings.objectives,
         ctaUrl
       });
+      if (generatedCopy.warning) {
+        executionWarnings.push(
+          `Content generation fallback for ${landing.landingUrl}: ${generatedCopy.warning}`
+        );
+      }
       const summary = input.context.settings.eeatStructuredSnippetEnabled
-        ? eeatDraft.snippet
+        ? generatedCopy.snippet
         : buildPostSummary({
             locationTitle: location.title ?? "our business",
             objective: input.objective,
@@ -1304,9 +1552,12 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           sourceLandingUrl: landing.landingUrl,
           tinyUrl: tinyUrlResult.tinyUrl,
           urlSource: landing.source,
+          contentProvider: generatedCopy.provider,
+          contentModel: generatedCopy.model,
+          contentWarning: generatedCopy.warning ?? null,
           pageContext,
-          wordCount: wordCount(eeatDraft.longForm),
-          longForm: eeatDraft.longForm
+          wordCount: wordCount(generatedCopy.longForm),
+          longForm: generatedCopy.longForm
         });
         publishedPosts.push({
           name: response.name,
