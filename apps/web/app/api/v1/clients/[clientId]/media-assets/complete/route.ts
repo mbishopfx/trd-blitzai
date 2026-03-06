@@ -9,12 +9,26 @@ interface Params {
   params: { clientId: string };
 }
 
+const DEFAULT_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
+
+function mediaMaxBytes(): number {
+  const raw = process.env.CLIENT_MEDIA_MAX_BYTES;
+  if (!raw) {
+    return DEFAULT_MEDIA_MAX_BYTES;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_MEDIA_MAX_BYTES;
+  }
+  return parsed;
+}
+
 const requestSchema = z.object({
   bucket: z.string().min(3).max(80),
   storagePath: z.string().min(3).max(500),
   fileName: z.string().min(1).max(220),
   mimeType: z.string().min(1).max(120),
-  bytes: z.number().int().positive().max(150 * 1024 * 1024)
+  bytes: z.number().int().positive().max(mediaMaxBytes())
 });
 
 async function authorize(request: NextRequest, clientId: string): Promise<{ organizationId: string } | Response> {
@@ -40,53 +54,57 @@ async function authorize(request: NextRequest, clientId: string): Promise<{ orga
 }
 
 export async function POST(request: NextRequest, { params }: Params) {
-  const auth = await authorize(request, params.clientId);
-  if (auth instanceof Response) {
-    return auth;
-  }
-
-  if (!isSupabaseConfigured()) {
-    return fail("Supabase storage must be configured for media upload", 503);
-  }
-
-  const body = await request.json().catch(() => null);
-  const parsed = requestSchema.safeParse(body);
-  if (!parsed.success) {
-    return fail("Invalid upload completion payload", 400, parsed.error.flatten());
-  }
-
-  const supabase = getSupabaseServiceClient();
-  const { data: signed, error: signedError } = await supabase.storage
-    .from(parsed.data.bucket)
-    .createSignedUrl(parsed.data.storagePath, 60 * 60 * 24 * 30);
-  if (signedError || !signed?.signedUrl) {
-    return fail(
-      `Upload completion failed because the file is not accessible in storage: ${signedError?.message ?? "unknown error"}`,
-      422
-    );
-  }
-
-  const asset = await createClientMediaAsset({
-    organizationId: auth.organizationId,
-    clientId: params.clientId,
-    storageBucket: parsed.data.bucket,
-    storagePath: parsed.data.storagePath,
-    fileName: parsed.data.fileName,
-    mimeType: parsed.data.mimeType,
-    bytes: parsed.data.bytes,
-    isAllowedForPosts: true,
-    metadata: {
-      uploadedVia: "dashboard-media-upload-signed"
+  try {
+    const auth = await authorize(request, params.clientId);
+    if (auth instanceof Response) {
+      return auth;
     }
-  });
 
-  return ok(
-    {
-      asset: {
-        ...asset,
-        previewUrl: signed.signedUrl
+    if (!isSupabaseConfigured()) {
+      return fail("Supabase storage must be configured for media upload", 503);
+    }
+
+    const body = await request.json().catch(() => null);
+    const parsed = requestSchema.safeParse(body);
+    if (!parsed.success) {
+      return fail("Invalid upload completion payload", 400, parsed.error.flatten());
+    }
+
+    const supabase = getSupabaseServiceClient();
+    const { data: signed, error: signedError } = await supabase.storage
+      .from(parsed.data.bucket)
+      .createSignedUrl(parsed.data.storagePath, 60 * 60 * 24 * 30);
+    if (signedError || !signed?.signedUrl) {
+      return fail(
+        `Upload completion failed because the file is not accessible in storage: ${signedError?.message ?? "unknown error"}`,
+        422
+      );
+    }
+
+    const asset = await createClientMediaAsset({
+      organizationId: auth.organizationId,
+      clientId: params.clientId,
+      storageBucket: parsed.data.bucket,
+      storagePath: parsed.data.storagePath,
+      fileName: parsed.data.fileName,
+      mimeType: parsed.data.mimeType,
+      bytes: parsed.data.bytes,
+      isAllowedForPosts: true,
+      metadata: {
+        uploadedVia: "dashboard-media-upload-signed"
       }
-    },
-    201
-  );
+    });
+
+    return ok(
+      {
+        asset: {
+          ...asset,
+          previewUrl: signed.signedUrl
+        }
+      },
+      201
+    );
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Failed to complete media upload", 500);
+  }
 }

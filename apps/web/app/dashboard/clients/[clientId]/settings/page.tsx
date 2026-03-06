@@ -322,25 +322,26 @@ export default function ClientOrchestrationSettingsPage() {
     try {
       const browserSupabase = supabaseBrowserConfigured ? getSupabaseBrowserClient() : null;
       for (const file of Array.from(files)) {
-        if (browserSupabase) {
-          const presign = await request<{
-            upload: {
-              bucket: string;
-              storagePath: string;
-              token: string;
-              fileName: string;
-              mimeType: string;
-              bytes: number;
-            };
-          }>(`/api/v1/clients/${clientId}/media-assets/presign`, {
-            method: "POST",
-            body: {
-              fileName: file.name,
-              mimeType: file.type || "application/octet-stream",
-              bytes: file.size
-            }
-          });
+        const presign = await request<{
+          upload: {
+            bucket: string;
+            storagePath: string;
+            token: string;
+            signedUrl: string;
+            fileName: string;
+            mimeType: string;
+            bytes: number;
+          };
+        }>(`/api/v1/clients/${clientId}/media-assets/presign`, {
+          method: "POST",
+          body: {
+            fileName: file.name,
+            mimeType: file.type || "application/octet-stream",
+            bytes: file.size
+          }
+        });
 
+        if (browserSupabase) {
           const upload = await browserSupabase.storage
             .from(presign.upload.bucket)
             .uploadToSignedUrl(
@@ -354,30 +355,27 @@ export default function ClientOrchestrationSettingsPage() {
           if (upload.error) {
             throw new Error(`Signed upload failed for ${file.name}: ${upload.error.message}`);
           }
-
-          await request(`/api/v1/clients/${clientId}/media-assets/complete`, {
-            method: "POST",
-            body: presign.upload
+        } else {
+          const response = await fetch(presign.upload.signedUrl, {
+            method: "PUT",
+            headers: {
+              "content-type": file.type || presign.upload.mimeType,
+              "x-upsert": "false"
+            },
+            body: file
           });
-          continue;
+          if (!response.ok) {
+            throw new Error(`Signed upload failed for ${file.name} (${response.status})`);
+          }
         }
 
-        const form = new FormData();
-        form.set("file", file);
-        const response = await fetch(`/api/v1/clients/${clientId}/media-assets`, {
+        await request(`/api/v1/clients/${clientId}/media-assets/complete`, {
           method: "POST",
-          headers: buildAuthHeaders(),
-          body: form
+          body: presign.upload
         });
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        if (!response.ok) {
-          throw new Error(payload?.error ?? `Upload failed (${response.status})`);
-        }
       }
 
-      setStatus(
-        `Uploaded ${files.length} file(s) to client media bucket${supabaseBrowserConfigured ? " via signed upload" : ""}.`
-      );
+      setStatus(`Uploaded ${files.length} file(s) to client media bucket via signed upload.`);
       loadWorkspace();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
