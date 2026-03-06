@@ -93,8 +93,15 @@ interface CompetitorRecord {
   rankPosition?: number;
 }
 
+interface SemanticServiceBundle {
+  serviceName: string;
+  serviceDescription: string;
+}
+
 interface LocationSemanticSuggestions {
   profileDescription: string | null;
+  primaryCategory: string | null;
+  serviceBundles: SemanticServiceBundle[];
   qaPairs: Array<{ question: string; answer: string }>;
   usps: string[];
   suggestedCategories: string[];
@@ -104,6 +111,7 @@ interface LocationSemanticSuggestions {
   hoursRecommendations: string[];
   warning?: string;
   model?: string | null;
+  promptVersion?: string;
 }
 
 interface GeoPoint {
@@ -118,6 +126,7 @@ interface LocationRichSnapshot {
   profileDescription: string | null;
   categories: string[];
   categoryResourceNames: string[];
+  serviceLabels: string[];
   attributes: string[];
   regularHours: Record<string, unknown> | null;
   specialHours: Record<string, unknown> | null;
@@ -168,6 +177,20 @@ const DEFAULT_OPTIONS: ExecutorOptions = {
   maxPostBurst: 25,
   maxReviewRepliesPerAction: 60
 };
+
+const BLITZ_COMPLETENESS_PROMPT_VERSION = "blitzforge-completeness-v1";
+const DEFAULT_SEMANTIC_MODEL = "gemini-2.0-flash";
+const BANNED_MARKETING_WORDS = [
+  "best",
+  "premier",
+  "high-quality",
+  "highest quality",
+  "world-class",
+  "top-rated",
+  "number one",
+  "unmatched",
+  "leading"
+];
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -310,6 +333,66 @@ function likelyNestedSitemap(url: string): boolean {
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function truncateChars(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return value.slice(0, Math.max(0, maxChars)).trim();
+}
+
+function stripBannedMarketingClaims(value: string): string {
+  let result = value;
+  for (const banned of BANNED_MARKETING_WORDS) {
+    const pattern = new RegExp(`\\b${banned.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi");
+    result = result.replace(pattern, "");
+  }
+  return normalizeText(result.replace(/\s{2,}/g, " "));
+}
+
+function sanitizeDeclarativeCopy(value: string, maxChars: number): string {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  const withoutFluff = stripBannedMarketingClaims(normalized);
+  const compact = truncateChars(withoutFluff, maxChars).trim();
+  if (!compact) {
+    return "";
+  }
+  return /[.!?]$/.test(compact) ? compact : `${compact}.`;
+}
+
+function sanitizeEntityLabel(value: string, maxChars: number): string {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  return truncateChars(stripBannedMarketingClaims(normalized), maxChars);
+}
+
+function extractNeighborhoodHintFromAddress(formattedAddress: string): string | null {
+  const clean = normalizeText(formattedAddress);
+  if (!clean) {
+    return null;
+  }
+  const firstSegment = clean.split(",")[0]?.trim() ?? "";
+  if (!firstSegment || /\d/.test(firstSegment)) {
+    return null;
+  }
+  return firstSegment;
+}
+
+function inferCountyFromAddress(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/([A-Za-z][A-Za-z ]+ County)/i);
+  if (!match?.[1]) {
+    return null;
+  }
+  return normalizeText(match[1]);
 }
 
 function stripHtmlTags(value: string): string {
@@ -637,10 +720,16 @@ function normalizeCategoryResourceName(value: string): string | null {
   if (trimmed.startsWith("categories/")) {
     return trimmed;
   }
+  if (/\s/.test(trimmed)) {
+    return null;
+  }
   if (trimmed.includes("/")) {
     return null;
   }
-  return `categories/${trimmed}`;
+  if (/^gcid:[a-z0-9_]+$/i.test(trimmed) || /^[0-9]{4,}$/.test(trimmed)) {
+    return `categories/${trimmed}`;
+  }
+  return null;
 }
 
 function addressFromStorefront(storefront: Record<string, unknown> | null): string | null {
@@ -871,6 +960,7 @@ function buildPostSummary(input: {
 
 export class GbpLiveActionExecutor implements ActionExecutor {
   private readonly contextCache = new Map<string, RunContext>();
+  private readonly websiteGroundTruthCache = new Map<string, { rawTextDump: string; sourceUrls: string[] }>();
   private readonly options: ExecutorOptions;
 
   constructor(
@@ -1841,6 +1931,36 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     return [...new Set(resourceNames)];
   }
 
+  private extractLocationServiceLabels(location: Record<string, unknown>): string[] {
+    const rawServiceItems = Array.isArray(location.serviceItems) ? location.serviceItems : [];
+    const labels = rawServiceItems
+      .map((entry) => {
+        const record = asRecord(entry);
+        const freeForm = asRecord(record.freeFormServiceItem);
+        const labelRecord = asRecord(freeForm.label);
+        const displayFromFreeForm = typeof labelRecord.displayName === "string" ? labelRecord.displayName : null;
+        if (displayFromFreeForm) {
+          return normalizeText(displayFromFreeForm);
+        }
+
+        const structured = asRecord(record.structuredServiceItem);
+        const displayFromStructured =
+          typeof structured.serviceTypeDisplayName === "string"
+            ? structured.serviceTypeDisplayName
+            : typeof structured.serviceTypeId === "string"
+              ? structured.serviceTypeId
+              : null;
+        if (displayFromStructured) {
+          return normalizeText(displayFromStructured);
+        }
+
+        const fallbackLabel = typeof record.displayName === "string" ? record.displayName : null;
+        return fallbackLabel ? normalizeText(fallbackLabel) : null;
+      })
+      .filter((entry): entry is string => Boolean(entry));
+    return [...new Set(labels)];
+  }
+
   private extractLocationAttributes(location: Record<string, unknown>): string[] {
     const rawAttributes = Array.isArray(location.attributes) ? location.attributes : [];
     const labels = rawAttributes
@@ -2039,6 +2159,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       profileDescription: this.extractProfileDescription(merged),
       categories: this.extractLocationCategories(merged),
       categoryResourceNames: this.extractLocationCategoryResourceNames(merged),
+      serviceLabels: this.extractLocationServiceLabels(merged),
       attributes: this.extractLocationAttributes(merged),
       regularHours: Object.keys(asRecord(merged.regularHours)).length ? asRecord(merged.regularHours) : null,
       specialHours: this.extractSpecialHours(merged),
@@ -2162,60 +2283,223 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
   }
 
-  private buildSemanticSuggestionPrompt(input: {
+  private buildCompletenessSystemPrompt(): string {
+    return [
+      "SYSTEM ROLE:",
+      "You are an elite Local SEO Data Architect in 2026.",
+      "Your objective is to process raw business data and generate a strictly formatted JSON payload for the Google Business Profile (GBP) API.",
+      "Optimize for Google AI Overviews, Gemini-powered Maps, and zero-click local pack retrieval.",
+      "",
+      "PERSONA & ALGORITHMIC CONTEXT:",
+      "- Prioritize local intent matching, entity density, and factual completeness.",
+      "- Write in declarative factual language that can be quoted by retrieval systems.",
+      "- Optimize for relevance, distance context, and prominence signals without policy violations.",
+      "",
+      "ANTI-FLUFF DIRECTIVES:",
+      "- No hype language and no unverifiable claims.",
+      '- Do not use words such as "best", "premier", "high-quality", "world-class", or "top-rated" unless explicitly quoted from source data.',
+      "- Use concise factual chunks and concrete entities (brands, neighborhoods, service types, response windows).",
+      "",
+      "JSON CONTRACT:",
+      "- Return JSON only. No markdown. No prose outside JSON.",
+      "- Required keys: profileDescription, primaryCategory, services.",
+      "- profileDescription max 750 characters.",
+      "- Each serviceDescription max 300 characters."
+    ].join("\n");
+  }
+
+  private async loadWebsiteGroundTruth(input: {
+    websiteUri: string | null;
+    sitemapUrls: string[];
+  }): Promise<{ rawTextDump: string; sourceUrls: string[] }> {
+    const websiteUri = normalizeHttpUrl(input.websiteUri);
+    let preferredHost: string | null = null;
+    if (websiteUri) {
+      try {
+        preferredHost = new URL(websiteUri).host;
+      } catch {
+        preferredHost = null;
+      }
+    }
+
+    const scopedSitemapUrls = input.sitemapUrls.filter((url) => {
+      if (!preferredHost) {
+        return true;
+      }
+      try {
+        return new URL(url).host === preferredHost;
+      } catch {
+        return false;
+      }
+    });
+
+    const sourceUrls = uniqueStrings([websiteUri, ...scopedSitemapUrls], 3);
+    if (!sourceUrls.length) {
+      return {
+        rawTextDump: "No website content was retrievable for this location.",
+        sourceUrls: []
+      };
+    }
+
+    const cacheKey = sourceUrls.join("|");
+    const cached = this.websiteGroundTruthCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const excerpts: string[] = [];
+    for (const sourceUrl of sourceUrls) {
+      try {
+        const html = await this.fetchTextWithTimeout(sourceUrl, 12000);
+        const text = truncateChars(stripHtmlTags(html), 2200);
+        if (!text) {
+          continue;
+        }
+        excerpts.push(`[${sourceUrl}] ${text}`);
+      } catch {
+        // Ignore source-level fetch errors and continue.
+      }
+    }
+
+    const rawTextDump = excerpts.length
+      ? truncateChars(excerpts.join("\n\n"), 6500)
+      : "No website content was retrievable for this location.";
+    const value = {
+      rawTextDump,
+      sourceUrls
+    };
+    this.websiteGroundTruthCache.set(cacheKey, value);
+    return value;
+  }
+
+  private normalizeSemanticServiceBundles(value: unknown, cityState: string): SemanticServiceBundle[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    const results: SemanticServiceBundle[] = [];
+    for (const entry of value) {
+      const record = asRecord(entry);
+      const rawName = typeof record.serviceName === "string" ? record.serviceName : "";
+      const rawDescription = typeof record.serviceDescription === "string" ? record.serviceDescription : "";
+      const serviceName = sanitizeEntityLabel(rawName, 120);
+      if (!serviceName) {
+        continue;
+      }
+      const dedupeKey = serviceName.toLowerCase();
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+
+      const fallbackDescription = `${serviceName} is available in ${cityState} with scope, timeline, and pricing details provided before scheduling.`;
+      const serviceDescription = sanitizeDeclarativeCopy(rawDescription || fallbackDescription, 300);
+      if (!serviceDescription) {
+        continue;
+      }
+
+      results.push({
+        serviceName: truncateChars(serviceName, 120),
+        serviceDescription: truncateChars(serviceDescription, 300)
+      });
+      if (results.length >= 30) {
+        break;
+      }
+    }
+
+    return results;
+  }
+
+  private inferTopNeighborhoods(input: {
+    cityState: string | null;
+    competitors: CompetitorRecord[];
+  }): string[] {
+    const city = input.cityState?.split(",")[0]?.trim().toLowerCase() ?? "";
+    const neighborhoods = uniqueStrings(
+      input.competitors
+        .map((competitor) => (competitor.formattedAddress ? extractNeighborhoodHintFromAddress(competitor.formattedAddress) : null))
+        .filter((value): value is string => Boolean(value))
+        .filter((value) => value.toLowerCase() !== city),
+      3
+    );
+    return neighborhoods.length ? neighborhoods : ["not_specified"];
+  }
+
+  private buildCompletenessUserPrompt(input: {
     location: ResolvedLocation;
     snapshot: LocationRichSnapshot;
     competitors: CompetitorRecord[];
     objectives: string[];
+    rawWebsiteDump: string;
+    websiteSources: string[];
   }): string {
-    const locationName = input.snapshot.title ?? input.location.title ?? "This business";
-    const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "local area";
-    const currentCategories = input.snapshot.categories.length ? input.snapshot.categories.join(", ") : "none";
+    const businessName = input.snapshot.title ?? input.location.title ?? "Business";
+    const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "Unknown";
+    const county = inferCountyFromAddress(input.snapshot.formattedAddress) ?? "Unknown";
+    const neighborhoods = this.inferTopNeighborhoods({
+      cityState,
+      competitors: input.competitors
+    });
+    const offerings = uniqueStrings(
+      [
+        ...input.snapshot.serviceLabels,
+        ...input.objectives.map((objective) => readableObjective(objective)),
+        ...input.snapshot.categories
+      ],
+      24
+    );
     const competitorLines = input.competitors.length
       ? input.competitors
-          .map((competitor) => {
-            const rating = competitor.rating ? `${competitor.rating.toFixed(1)}★` : "n/a";
+          .map((competitor, index) => {
+            const rating = competitor.rating ? competitor.rating.toFixed(1) : "n/a";
             const reviews = competitor.userRatingCount ?? 0;
-            return `- ${competitor.name} | rating ${rating} | reviews ${reviews} | type ${competitor.primaryType ?? "n/a"}`
+            return `${index + 1}. ${competitor.name} | rating=${rating} | reviews=${reviews} | type=${competitor.primaryType ?? "n/a"} | address=${competitor.formattedAddress ?? "n/a"}`;
           })
           .join("\n")
-      : "- none available";
-    const objectiveLine = input.objectives.length ? input.objectives.join("; ") : "Increase qualified local conversions";
+      : "none";
+    const sourceLine = input.websiteSources.length ? input.websiteSources.join(", ") : "none";
+    const currentCategories = input.snapshot.categories.length ? input.snapshot.categories.join(", ") : "none";
+    const currentServices = input.snapshot.serviceLabels.length ? input.snapshot.serviceLabels.join(", ") : "none";
 
     return [
-      "You are an expert Google Business Profile strategist.",
-      "Generate profile optimization data for the business below.",
+      "INPUT DATA:",
+      `Business Name: ${businessName}`,
+      `Location Data: ${cityState}, ${county}, ${neighborhoods.join(", ")}`,
+      `Scraped Website Content Sources: ${sourceLine}`,
+      `Scraped Website Content: ${input.rawWebsiteDump}`,
+      `Core Offerings: ${offerings.length ? offerings.join(", ") : "none provided"}`,
+      `Current GBP Categories: ${currentCategories}`,
+      `Current GBP Services: ${currentServices}`,
       "",
-      "Return STRICT JSON with this exact shape:",
+      "DIRECTIVES & WRITING RULES:",
+      "1. High Entity Density: Include specific nouns such as service types, equipment brands, neighborhoods, and outcomes.",
+      "2. Declarative Tone: No marketing fluff. No unsupported claims.",
+      "3. Granular Services: Break broad offerings into specific bookable services. Max 300 characters per serviceDescription.",
+      "4. Completeness: Infer practical GBP field recommendations from industry context while staying policy-safe.",
+      "5. Competitor Context: Use competitor patterns for coverage gaps only; do not copy competitor claims.",
+      "",
+      "TOP COMPETITOR BENCHMARK:",
+      competitorLines,
+      "",
+      "OUTPUT FORMAT:",
+      "Return ONLY valid JSON with this schema:",
       "{",
-      '  "profileDescription": "string",',
+      '  "profileDescription": "string (max 750 characters)",',
+      '  "primaryCategory": "string (Google category resource like categories/<id> when possible, else category label)",',
+      '  "services": [',
+      "    {",
+      '      "serviceName": "string",',
+      '      "serviceDescription": "string (max 300 characters)"',
+      "    }",
+      "  ],",
       '  "qaPairs": [{"question":"string","answer":"string"}],',
       '  "usps": ["string"],',
       '  "suggestedCategories": ["string"],',
-      '  "suggestedServices": ["string"],',
       '  "suggestedProducts": ["string"],',
       '  "suggestedAttributes": ["string"],',
       '  "hoursRecommendations": ["string"]',
       "}",
-      "",
-      "Rules:",
-      "- Keep profileDescription 400-740 characters.",
-      "- Include hyperlocal wording and concrete service outcomes.",
-      "- qaPairs should be 20 to 24 high-intent GBP questions and concise answers.",
-      "- suggestedServices and suggestedProducts should be declarative and conversion-focused.",
-      "- Do not hallucinate unsupported guarantees.",
-      "",
-      "Business context:",
-      `- Business: ${locationName}`,
-      `- Local area: ${cityState}`,
-      `- Current categories: ${currentCategories}`,
-      `- Current review count: ${input.snapshot.reviewCount}`,
-      `- Current rating: ${input.snapshot.averageRating.toFixed(2)}`,
-      `- Current website: ${input.snapshot.websiteUri ?? "missing"}`,
-      `- Objectives: ${objectiveLine}`,
-      "",
-      "Top competitors:",
-      competitorLines,
       "",
       "Return JSON only."
     ].join("\n");
@@ -2229,11 +2513,29 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     const locationTitle = input.snapshot.title ?? input.location.title ?? "our business";
     const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "the local area";
     const objectiveLine = input.objectives[0] ? readableObjective(input.objectives[0]) : "local visibility";
-    const description = [
+    const descriptionSeed = [
       `${locationTitle} serves customers across ${cityState} with clear scope, reliable communication, and outcome-focused service delivery.`,
       `Our team prioritizes ${objectiveLine}, transparent turnaround expectations, and practical recommendations tailored to local demand.`,
       "Contact us for current availability and same-day guidance where applicable."
     ].join(" ");
+    const profileDescription = sanitizeDeclarativeCopy(descriptionSeed, 750);
+    const serviceNames = uniqueStrings(
+      [
+        ...input.snapshot.serviceLabels,
+        ...input.objectives.map((objective) => `${readableObjective(objective)} service`)
+      ],
+      24
+    );
+    const serviceBundles = serviceNames.map((serviceName) => ({
+      serviceName: sanitizeEntityLabel(serviceName, 120),
+      serviceDescription: truncateChars(
+        sanitizeDeclarativeCopy(
+          `${serviceName} is available in ${cityState} with clear scope, timeline expectations, and booking guidance for local customers.`,
+          300
+        ),
+        300
+      )
+    }));
     const qaSeedQuestions = uniqueStrings(
       [
         `What areas does ${locationTitle} serve?`,
@@ -2261,7 +2563,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     );
 
     return {
-      profileDescription: truncateToMaxWords(description, 120),
+      profileDescription,
+      primaryCategory: input.snapshot.categoryResourceNames[0] ?? input.snapshot.categories[0] ?? null,
+      serviceBundles,
       qaPairs: qaSeedQuestions.map((question, index) => ({
         question,
         answer:
@@ -2273,11 +2577,12 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         "Local service coverage with transparent response windows",
         "Structured delivery process with clear customer communication"
       ],
-      suggestedCategories: input.snapshot.categories.slice(0, 3),
-      suggestedServices: input.objectives.slice(0, 4).map((objective) => `${readableObjective(objective)} service`),
+      suggestedCategories: input.snapshot.categories.slice(0, 4),
+      suggestedServices: serviceBundles.map((service) => service.serviceName).slice(0, 30),
       suggestedProducts: [],
       suggestedAttributes: input.snapshot.attributes.slice(0, 6),
-      hoursRecommendations: []
+      hoursRecommendations: [],
+      promptVersion: BLITZ_COMPLETENESS_PROMPT_VERSION
     };
   }
 
@@ -2286,6 +2591,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     snapshot: LocationRichSnapshot;
     competitors: CompetitorRecord[];
     objectives: string[];
+    settings: ClientOrchestrationSettingsRecord;
+    sitemapUrls?: string[];
   }): Promise<LocationSemanticSuggestions> {
     const fallback = this.buildFallbackSemanticSuggestions({
       location: input.location,
@@ -2298,22 +2605,34 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ??
       process.env.GOOGLE_API_KEY?.trim() ??
       null;
-    const model = process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
+    const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_SEMANTIC_MODEL;
 
     if (!apiKey) {
       return {
         ...fallback,
         warning: "Gemini API key not configured; semantic suggestions generated from fallback rules.",
-        model: null
+        model: null,
+        promptVersion: BLITZ_COMPLETENESS_PROMPT_VERSION
       };
     }
 
     try {
-      const prompt = this.buildSemanticSuggestionPrompt({
+      const sitemapUrls = input.sitemapUrls ?? (await this.loadSitemapUrls(input.settings.sitemapUrl));
+      const websiteUri =
+        normalizeHttpUrl(input.snapshot.websiteUri) ??
+        normalizeHttpUrl(input.location.websiteUri) ??
+        normalizeHttpUrl(input.settings.defaultPostUrl);
+      const groundTruth = await this.loadWebsiteGroundTruth({
+        websiteUri,
+        sitemapUrls
+      });
+      const prompt = this.buildCompletenessUserPrompt({
         location: input.location,
         snapshot: input.snapshot,
         competitors: input.competitors,
-        objectives: input.objectives
+        objectives: input.objectives,
+        rawWebsiteDump: groundTruth.rawTextDump,
+        websiteSources: groundTruth.sourceUrls
       });
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
@@ -2323,20 +2642,26 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
+            systemInstruction: {
+              parts: [{ text: this.buildCompletenessSystemPrompt() }]
+            },
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
-              temperature: 0.55,
-              topP: 0.9,
-              maxOutputTokens: 1800
+              temperature: 0.35,
+              topP: 0.85,
+              maxOutputTokens: 2400,
+              responseMimeType: "application/json"
             }
           })
         }
       );
       if (!response.ok) {
+        const responseText = await response.text().catch(() => "");
         return {
           ...fallback,
-          warning: `Gemini API returned ${response.status}; fallback suggestions applied.`,
-          model
+          warning: `Gemini API returned ${response.status}; fallback suggestions applied. ${responseText.slice(0, 220)}`,
+          model,
+          promptVersion: BLITZ_COMPLETENESS_PROMPT_VERSION
         };
       }
 
@@ -2351,10 +2676,12 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         return {
           ...fallback,
           warning: "Gemini output did not parse as JSON; fallback suggestions applied.",
-          model
+          model,
+          promptVersion: BLITZ_COMPLETENESS_PROMPT_VERSION
         };
       }
 
+      const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "the local market";
       const qaRaw = Array.isArray(parsed.qaPairs) ? parsed.qaPairs : [];
       const qaPairs = qaRaw
         .map((entry) => {
@@ -2368,26 +2695,59 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         })
         .filter((entry): entry is { question: string; answer: string } => Boolean(entry))
         .slice(0, 20);
+      const primaryCategoryRaw = typeof parsed.primaryCategory === "string" ? normalizeText(parsed.primaryCategory) : "";
+      const primaryCategory = primaryCategoryRaw
+        ? normalizeCategoryResourceName(primaryCategoryRaw) ?? primaryCategoryRaw
+        : fallback.primaryCategory;
+      const parsedServices = this.normalizeSemanticServiceBundles(parsed.services, cityState);
+      const serviceBundles = parsedServices.length ? parsedServices : fallback.serviceBundles;
+      const profileDescriptionRaw = typeof parsed.profileDescription === "string" ? parsed.profileDescription : "";
+      const generatedProfileDescription =
+        profileDescriptionRaw.trim().length > 0 ? sanitizeDeclarativeCopy(profileDescriptionRaw, 750) : "";
+      const profileDescription = generatedProfileDescription || fallback.profileDescription;
+      const optionalSuggestedCategories = toStringArray(parsed.suggestedCategories).slice(0, 8);
+      const suggestedCategories = uniqueStrings(
+        [
+          ...optionalSuggestedCategories,
+          ...(primaryCategory ? [primaryCategory] : []),
+          ...fallback.suggestedCategories
+        ],
+        8
+      );
+      const optionalSuggestedServices = toStringArray(parsed.suggestedServices).slice(0, 30);
+      const suggestedServices = uniqueStrings(
+        [...serviceBundles.map((service) => service.serviceName), ...optionalSuggestedServices, ...fallback.suggestedServices],
+        30
+      );
 
       return {
-        profileDescription:
-          typeof parsed.profileDescription === "string" && parsed.profileDescription.trim()
-            ? parsed.profileDescription.trim().slice(0, 750)
-            : fallback.profileDescription,
+        profileDescription,
+        primaryCategory,
+        serviceBundles,
         qaPairs: qaPairs.length ? qaPairs : fallback.qaPairs,
-        usps: toStringArray(parsed.usps).slice(0, 12),
-        suggestedCategories: toStringArray(parsed.suggestedCategories).slice(0, 8),
-        suggestedServices: toStringArray(parsed.suggestedServices).slice(0, 30),
-        suggestedProducts: toStringArray(parsed.suggestedProducts).slice(0, 30),
-        suggestedAttributes: toStringArray(parsed.suggestedAttributes).slice(0, 20),
-        hoursRecommendations: toStringArray(parsed.hoursRecommendations).slice(0, 10),
-        model
+        usps: uniqueStrings(
+          [
+            ...toStringArray(parsed.usps)
+              .map((value) => sanitizeDeclarativeCopy(value, 220))
+              .filter(Boolean),
+            ...fallback.usps
+          ],
+          12
+        ),
+        suggestedCategories,
+        suggestedServices,
+        suggestedProducts: uniqueStrings([...toStringArray(parsed.suggestedProducts), ...fallback.suggestedProducts], 30),
+        suggestedAttributes: uniqueStrings([...toStringArray(parsed.suggestedAttributes), ...fallback.suggestedAttributes], 20),
+        hoursRecommendations: uniqueStrings([...toStringArray(parsed.hoursRecommendations), ...fallback.hoursRecommendations], 10),
+        model,
+        promptVersion: BLITZ_COMPLETENESS_PROMPT_VERSION
       };
     } catch (error) {
       return {
         ...fallback,
         warning: error instanceof Error ? error.message : String(error),
-        model
+        model,
+        promptVersion: BLITZ_COMPLETENESS_PROMPT_VERSION
       };
     }
   }
@@ -2608,8 +2968,27 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     };
   }
 
+  private buildCategoryPatchRecommendations(input: {
+    primaryCategory: string | null;
+    suggestedCategories: string[];
+  }): Array<Record<string, unknown>> {
+    const candidates = uniqueStrings([input.primaryCategory, ...input.suggestedCategories], 4);
+    return candidates.map((candidate) => {
+      const resourceName = normalizeCategoryResourceName(candidate);
+      if (resourceName) {
+        return {
+          name: resourceName
+        };
+      }
+      return {
+        displayName: candidate
+      };
+    });
+  }
+
   private buildServiceItemsForPatch(input: {
     categoryResourceName: string | null;
+    serviceBundles: SemanticServiceBundle[];
     suggestedServices: string[];
     suggestedProducts: string[];
   }): Array<Record<string, unknown>> {
@@ -2619,8 +2998,19 @@ export class GbpLiveActionExecutor implements ActionExecutor {
 
     const seen = new Set<string>();
     const serviceItems: Array<Record<string, unknown>> = [];
-    for (const labelRaw of [...input.suggestedServices, ...input.suggestedProducts]) {
-      const label = normalizeText(labelRaw).slice(0, 140);
+    const fallbackBundles = [...input.suggestedServices, ...input.suggestedProducts].map((label) => ({
+      serviceName: label,
+      serviceDescription: ""
+    }));
+    const normalizedBundles = [...input.serviceBundles, ...fallbackBundles];
+    for (const bundle of normalizedBundles) {
+      const serviceName = sanitizeEntityLabel(bundle.serviceName, 120);
+      if (!serviceName) {
+        continue;
+      }
+      const serviceDescription = sanitizeDeclarativeCopy(bundle.serviceDescription, 300);
+      const labelRaw = serviceDescription ? `${serviceName}: ${serviceDescription}` : serviceName;
+      const label = normalizeText(truncateChars(labelRaw, 140));
       if (!label) {
         continue;
       }
@@ -2903,7 +3293,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           location,
           snapshot,
           competitors,
-          objectives: input.context.settings.objectives
+          objectives: input.context.settings.objectives,
+          settings: input.context.settings
         });
         if (suggestions.warning) {
           warnings.push(`${location.locationName}: ${suggestions.warning}`);
@@ -2912,6 +3303,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         generatedQaPayloads.push({
           locationName: location.locationName,
           title: snapshot.title ?? location.title,
+          primaryCategory: suggestions.primaryCategory,
+          serviceBundles: suggestions.serviceBundles,
           qaPairs: suggestions.qaPairs,
           usps: suggestions.usps,
           suggestedCategories: suggestions.suggestedCategories,
@@ -2919,7 +3312,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           suggestedProducts: suggestions.suggestedProducts,
           suggestedAttributes: suggestions.suggestedAttributes,
           hoursRecommendations: suggestions.hoursRecommendations,
-          model: suggestions.model ?? null
+          model: suggestions.model ?? null,
+          promptVersion: suggestions.promptVersion ?? null
         });
 
         const nextDescription = suggestions.profileDescription ? normalizeText(suggestions.profileDescription) : "";
@@ -2957,11 +3351,14 @@ export class GbpLiveActionExecutor implements ActionExecutor {
                 competitorCount: competitors.length,
                 previousDescriptionLength: currentDescription.length,
                 nextDescriptionLength: nextDescription.length,
+                primaryCategory: suggestions.primaryCategory,
+                serviceBundles: suggestions.serviceBundles,
                 qaPairs: suggestions.qaPairs,
                 suggestedCategories: suggestions.suggestedCategories,
                 suggestedServices: suggestions.suggestedServices,
                 suggestedProducts: suggestions.suggestedProducts,
-                suggestedAttributes: suggestions.suggestedAttributes
+                suggestedAttributes: suggestions.suggestedAttributes,
+                promptVersion: suggestions.promptVersion ?? null
               }
             });
             queued.push({
@@ -3098,7 +3495,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           location,
           snapshot,
           competitors,
-          objectives: input.context.settings.objectives
+          objectives: input.context.settings.objectives,
+          settings: input.context.settings,
+          sitemapUrls
         });
         if (suggestions.warning) {
           warnings.push(`${location.locationName}: ${suggestions.warning}`);
@@ -3137,11 +3536,15 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           }
         }
 
-        if (!snapshot.categories.length && suggestions.suggestedCategories.length) {
-          patch.categories = suggestions.suggestedCategories.slice(0, 4).map((category) => ({
-            displayName: category
-          }));
-          updateMask.push("categories");
+        if (!snapshot.categories.length) {
+          const categoryRecommendations = this.buildCategoryPatchRecommendations({
+            primaryCategory: suggestions.primaryCategory,
+            suggestedCategories: suggestions.suggestedCategories
+          });
+          if (categoryRecommendations.length) {
+            patch.categories = categoryRecommendations;
+            updateMask.push("categories");
+          }
         }
 
         if (!snapshot.regularHours && Object.keys(defaultHours).length > 0) {
@@ -3157,6 +3560,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         const categoryResourceName = snapshot.categoryResourceNames[0] ?? null;
         const serviceItems = this.buildServiceItemsForPatch({
           categoryResourceName,
+          serviceBundles: suggestions.serviceBundles,
           suggestedServices: suggestions.suggestedServices,
           suggestedProducts: suggestions.suggestedProducts
         });
@@ -3283,13 +3687,16 @@ export class GbpLiveActionExecutor implements ActionExecutor {
                 attributeMetadataCount,
                 operationKinds: operations.map((entry) => String(entry.kind ?? "unknown")),
                 suggestions: {
+                  primaryCategory: suggestions.primaryCategory,
+                  serviceBundles: suggestions.serviceBundles,
                   usps: suggestions.usps,
                   categories: suggestions.suggestedCategories,
                   services: suggestions.suggestedServices,
                   products: suggestions.suggestedProducts,
                   attributes: suggestions.suggestedAttributes,
                   hoursRecommendations: suggestions.hoursRecommendations,
-                  qaPairs: suggestions.qaPairs
+                  qaPairs: suggestions.qaPairs,
+                  promptVersion: suggestions.promptVersion ?? null
                 },
                 derived: {
                   attributeMask: attributeOperations.attributeMask,
@@ -3403,13 +3810,16 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             operations: executedOperations,
             unavailableWrites,
             suggestions: {
+              primaryCategory: suggestions.primaryCategory,
+              serviceBundles: suggestions.serviceBundles,
               usps: suggestions.usps,
               categories: suggestions.suggestedCategories,
               services: suggestions.suggestedServices,
               products: suggestions.suggestedProducts,
               attributes: suggestions.suggestedAttributes,
               hoursRecommendations: suggestions.hoursRecommendations,
-              qaPairs: suggestions.qaPairs
+              qaPairs: suggestions.qaPairs,
+              promptVersion: suggestions.promptVersion ?? null
             }
           });
         } catch (error) {
@@ -4668,7 +5078,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         location,
         snapshot,
         competitors,
-        objectives: input.context.settings.objectives
+        objectives: input.context.settings.objectives,
+        settings: input.context.settings,
+        sitemapUrls
       });
       const suggestions: LocationSemanticSuggestions = {
         ...suggestionsRaw,
