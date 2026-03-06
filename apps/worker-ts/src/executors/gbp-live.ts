@@ -142,8 +142,14 @@ interface VisionAssetMetadata {
   caption: string;
   altText: string;
   tags: string[];
+  entities: string[];
   sceneType: string;
   qualityScore: number;
+  isSafe: boolean;
+  isRelevant: boolean;
+  moderationRisk: "low" | "medium" | "high";
+  serviceRelevanceScore: number;
+  rejectionReasons?: string[];
   warning?: string;
   model?: string | null;
 }
@@ -3894,14 +3900,23 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     locationTitle: string;
     cityState: string | null;
     variantType: MediaFloodUploadCandidate["variantType"];
+    entityHints?: string[];
     ordinal: number;
     extension: string;
   }): string {
     const businessSlug = sanitizeStorageSegment(input.locationTitle.toLowerCase()).slice(0, 42) || "business";
     const citySlug = sanitizeStorageSegment((input.cityState ?? "local").toLowerCase()).slice(0, 26) || "local";
+    const entitySlug = sanitizeStorageSegment(
+      (input.entityHints ?? [])
+        .map((value) => value.toLowerCase())
+        .join("-")
+    )
+      .slice(0, 38)
+      .replace(/-+/g, "-");
     const variantSlug = sanitizeStorageSegment(input.variantType.toLowerCase()).slice(0, 28) || "media";
     const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    return `${businessSlug}-${citySlug}-${variantSlug}-${dateStamp}-${String(input.ordinal).padStart(3, "0")}.${input.extension}`;
+    const entityPart = entitySlug ? `-${entitySlug}` : "";
+    return `${businessSlug}${entityPart}-${citySlug}-${variantSlug}-${dateStamp}-${String(input.ordinal).padStart(3, "0")}.${input.extension}`;
   }
 
   private mediaCategoryForVariant(
@@ -3929,17 +3944,29 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     locationTitle: string;
     variantType: MediaFloodUploadCandidate["variantType"];
     cityState: string | null;
+    objectives: string[];
     tags?: string[];
   }): VisionAssetMetadata {
     const readableVariant = input.variantType.replace(/_/g, " ");
     const cityLine = input.cityState ? ` in ${input.cityState}` : "";
-    const caption = `${input.locationTitle} ${readableVariant} update${cityLine}.`.slice(0, 280);
+    const objectiveHints = uniqueStrings(input.objectives.map((objective) => readableObjective(objective)), 3);
+    const objectiveLine = objectiveHints.length ? objectiveHints.join(", ") : "local services";
+    const caption = sanitizeDeclarativeCopy(
+      `${input.locationTitle} ${readableVariant} update${cityLine} documenting ${objectiveLine}.`,
+      220
+    );
     return {
       caption,
-      altText: `${input.locationTitle} ${readableVariant} visual`,
+      altText: sanitizeDeclarativeCopy(`${input.locationTitle} ${readableVariant} visual`, 140),
       tags: [...new Set(["gbp", "local", input.variantType, ...(input.tags ?? [])])].slice(0, 14),
+      entities: uniqueStrings([input.locationTitle, ...(input.objectives ?? []), ...(input.tags ?? [])], 8),
       sceneType: input.variantType,
-      qualityScore: 72
+      qualityScore: 72,
+      isSafe: true,
+      isRelevant: true,
+      moderationRisk: "low",
+      serviceRelevanceScore: 72,
+      rejectionReasons: []
     };
   }
 
@@ -3957,6 +3984,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       locationTitle: input.locationTitle,
       variantType: input.variantType,
       cityState: input.cityState,
+      objectives: input.objectives,
       tags: input.fallbackTags
     });
 
@@ -3986,28 +4014,41 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     const objectiveLine = input.objectives.length ? input.objectives.join("; ") : "Increase local visibility and conversions";
     const prompt = [
       "You are a local SEO media optimizer for Google Business Profile.",
-      "Analyze the attached media and produce concise, factual metadata.",
+      "Analyze the attached media and produce safety verification, service relevance scoring, entity labels, and concise factual metadata.",
       "",
       "Return STRICT JSON only:",
       "{",
       '  "caption": "string",',
       '  "altText": "string",',
       '  "tags": ["string"],',
+      '  "entities": ["string"],',
       '  "sceneType": "string",',
-      '  "qualityScore": 0',
+      '  "qualityScore": 0,',
+      '  "isSafe": true,',
+      '  "isRelevant": true,',
+      '  "moderationRisk": "low|medium|high",',
+      '  "serviceRelevanceScore": 0,',
+      '  "rejectionReasons": ["string"]',
       "}",
       "",
       "Rules:",
       "- caption max 220 chars; human and specific; no hype.",
       "- altText max 140 chars.",
       "- tags 4-12 short lowercase tags.",
+      "- entities must include concrete visual nouns (equipment, tools, landmarks, signage, service contexts).",
       "- qualityScore integer 0-100.",
+      "- serviceRelevanceScore integer 0-100.",
+      "- isSafe is false for explicit content, violence, hateful symbols, or clear spam/watermark abuse.",
+      "- isRelevant is false when the media does not represent this business service context.",
+      "- moderationRisk must be low, medium, or high.",
+      "- rejectionReasons required when isSafe=false or isRelevant=false.",
       "- Avoid unverifiable claims.",
       "",
       `Business: ${input.locationTitle}`,
       `Variant Type: ${input.variantType}`,
       `City/State: ${input.cityState ?? "local area"}`,
       `Objectives: ${objectiveLine}`,
+      `Allowed service context hints: ${uniqueStrings(input.objectives.map((objective) => readableObjective(objective)), 8).join(", ") || "local services"}`,
       "Return JSON only."
     ].join("\n");
 
@@ -4037,7 +4078,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             generationConfig: {
               temperature: 0.35,
               topP: 0.9,
-              maxOutputTokens: 380
+              maxOutputTokens: 560,
+              responseMimeType: "application/json"
             }
           })
         }
@@ -4067,21 +4109,47 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
 
       const caption =
-        typeof parsed.caption === "string" && parsed.caption.trim() ? normalizeText(parsed.caption).slice(0, 220) : fallback.caption;
+        typeof parsed.caption === "string" && parsed.caption.trim()
+          ? sanitizeDeclarativeCopy(parsed.caption, 220)
+          : fallback.caption;
       const altText =
         typeof parsed.altText === "string" && parsed.altText.trim()
-          ? normalizeText(parsed.altText).slice(0, 140)
+          ? sanitizeDeclarativeCopy(parsed.altText, 140)
           : fallback.altText;
       const tags = [...new Set(toStringArray(parsed.tags).map((tag) => tag.toLowerCase()).slice(0, 14))];
+      const entities = uniqueStrings(
+        toStringArray(parsed.entities).map((entity) => sanitizeEntityLabel(entity, 80)).filter(Boolean),
+        16
+      );
       const sceneType = typeof parsed.sceneType === "string" && parsed.sceneType.trim() ? parsed.sceneType.trim() : fallback.sceneType;
       const qualityScore = clamp(Math.round(toNumber(parsed.qualityScore, fallback.qualityScore)), 0, 100);
+      const serviceRelevanceScore = clamp(
+        Math.round(toNumber(parsed.serviceRelevanceScore, fallback.serviceRelevanceScore)),
+        0,
+        100
+      );
+      const moderationRiskRaw = typeof parsed.moderationRisk === "string" ? parsed.moderationRisk.toLowerCase().trim() : "low";
+      const moderationRisk: VisionAssetMetadata["moderationRisk"] =
+        moderationRiskRaw === "high" || moderationRiskRaw === "medium" ? moderationRiskRaw : "low";
+      const isSafe = parsed.isSafe === false ? false : moderationRisk !== "high";
+      const isRelevant = parsed.isRelevant === false ? false : serviceRelevanceScore >= 35;
+      const rejectionReasons = uniqueStrings(
+        toStringArray(parsed.rejectionReasons).map((reason) => sanitizeDeclarativeCopy(reason, 140)).filter(Boolean),
+        6
+      );
 
       return {
         caption,
         altText,
         tags: tags.length ? tags : fallback.tags,
+        entities: entities.length ? entities : fallback.entities,
         sceneType,
         qualityScore,
+        isSafe,
+        isRelevant,
+        moderationRisk,
+        serviceRelevanceScore,
+        rejectionReasons,
         model
       };
     } catch (error) {
@@ -4245,6 +4313,188 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     };
   }
 
+  private deriveMediaSaturationConfig(input: {
+    payload: Record<string, unknown>;
+    settingsMetadata: Record<string, unknown>;
+    mediaFloodMetadata: Record<string, unknown>;
+    targetAssets: number;
+    batchSize: number;
+    cooldownMs: number;
+    includeStories: boolean;
+    includeVideos: boolean;
+    includeVirtualTours: boolean;
+  }): {
+    protocolMode: "standard" | "72h_saturation";
+    stage: "day1" | "day2" | "day3_7";
+    targetAssets: number;
+    batchSize: number;
+    cooldownMs: number;
+    includeStories: boolean;
+    includeVideos: boolean;
+    includeVirtualTours: boolean;
+    createFollowUpSchedule: boolean;
+    variantPriority: MediaFloodUploadCandidate["variantType"][];
+  } {
+    const protocolModeRaw =
+      typeof input.payload.protocolMode === "string"
+        ? input.payload.protocolMode.toLowerCase().trim()
+        : typeof input.mediaFloodMetadata.protocolMode === "string"
+          ? String(input.mediaFloodMetadata.protocolMode).toLowerCase().trim()
+          : typeof input.settingsMetadata.mediaFloodProtocolMode === "string"
+            ? String(input.settingsMetadata.mediaFloodProtocolMode).toLowerCase().trim()
+            : "72h_saturation";
+    const protocolMode: "standard" | "72h_saturation" =
+      protocolModeRaw === "72h_saturation" || protocolModeRaw === "72h" ? "72h_saturation" : "standard";
+    const stageRaw =
+      typeof input.payload.protocolStage === "string" ? input.payload.protocolStage.toLowerCase().trim() : "day1";
+    const stage: "day1" | "day2" | "day3_7" =
+      stageRaw === "day2" ? "day2" : stageRaw === "day3_7" || stageRaw === "day3-7" ? "day3_7" : "day1";
+    const createFollowUpSchedule = input.payload.createFollowUpSchedule !== false;
+
+    if (protocolMode === "standard") {
+      return {
+        protocolMode,
+        stage,
+        targetAssets: input.targetAssets,
+        batchSize: input.batchSize,
+        cooldownMs: input.cooldownMs,
+        includeStories: input.includeStories,
+        includeVideos: input.includeVideos,
+        includeVirtualTours: input.includeVirtualTours,
+        createFollowUpSchedule,
+        variantPriority: ["action_shot", "team_photo", "story_vertical", "virtual_tour_360", "video_story", "video_original"]
+      };
+    }
+
+    if (stage === "day2") {
+      return {
+        protocolMode,
+        stage,
+        targetAssets: clamp(Math.round(toNumber(input.payload.targetAssets, 4)), 2, 20),
+        batchSize: clamp(Math.round(toNumber(input.payload.batchSize, 3)), 1, 10),
+        cooldownMs: clamp(Math.round(toNumber(input.payload.cooldownMs, 1400)), 250, 8000),
+        includeStories: true,
+        includeVideos: true,
+        includeVirtualTours: true,
+        createFollowUpSchedule: false,
+        variantPriority: ["virtual_tour_360", "video_story", "video_original", "story_vertical", "action_shot", "team_photo"]
+      };
+    }
+
+    if (stage === "day3_7") {
+      return {
+        protocolMode,
+        stage,
+        targetAssets: clamp(Math.round(toNumber(input.payload.targetAssets, 5)), 3, 20),
+        batchSize: clamp(Math.round(toNumber(input.payload.batchSize, 4)), 1, 12),
+        cooldownMs: clamp(Math.round(toNumber(input.payload.cooldownMs, 1100)), 250, 8000),
+        includeStories: input.includeStories,
+        includeVideos: input.includeVideos,
+        includeVirtualTours: input.includeVirtualTours,
+        createFollowUpSchedule: false,
+        variantPriority: ["action_shot", "story_vertical", "team_photo", "video_story", "video_original", "virtual_tour_360"]
+      };
+    }
+
+    return {
+      protocolMode,
+      stage: "day1",
+      targetAssets: clamp(Math.round(toNumber(input.payload.targetAssets, 5)), 3, 25),
+      batchSize: clamp(Math.round(toNumber(input.payload.batchSize, 3)), 1, 10),
+      cooldownMs: clamp(Math.round(toNumber(input.payload.cooldownMs, 900)), 250, 8000),
+      includeStories: input.includeStories,
+      includeVideos: input.includeVideos,
+      includeVirtualTours: input.includeVirtualTours,
+      createFollowUpSchedule,
+      variantPriority: ["team_photo", "action_shot", "story_vertical", "video_story", "video_original", "virtual_tour_360"]
+    };
+  }
+
+  private prioritizeMediaCandidates(
+    candidates: MediaFloodUploadCandidate[],
+    variantPriority: MediaFloodUploadCandidate["variantType"][]
+  ): MediaFloodUploadCandidate[] {
+    const index = new Map<string, number>();
+    variantPriority.forEach((variant, position) => {
+      index.set(variant, position);
+    });
+    return [...candidates].sort((a, b) => {
+      const aPriority = index.get(a.variantType) ?? 999;
+      const bPriority = index.get(b.variantType) ?? 999;
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
+      }
+      const aEntityWeight = a.tags.length;
+      const bEntityWeight = b.tags.length;
+      return bEntityWeight - aEntityWeight;
+    });
+  }
+
+  private async scheduleMediaSaturationFollowUps(input: {
+    action: BlitzAction;
+    context: RunContext;
+    includeStories: boolean;
+    includeVideos: boolean;
+    includeVirtualTours: boolean;
+    includeGeoTags: boolean;
+    enableVision: boolean;
+  }): Promise<Array<Record<string, unknown>>> {
+    const now = new Date();
+    const scheduled: Array<Record<string, unknown>> = [];
+    const organizationId = input.action.organizationId ?? input.context.connection.organizationId;
+    const clientId = input.action.clientId ?? input.context.connection.clientId;
+
+    const enqueue = async (stage: "day2" | "day3_7", dayOffset: number, targetAssets: number, batchSize: number) => {
+      const scheduledFor = parseRelativeWindow(now, `+${dayOffset}d`, `${input.action.id}:${stage}:${dayOffset}`);
+      const actionPayload = {
+        objective: "media_derivative_batch_upload",
+        protocolMode: "72h_saturation",
+        protocolStage: stage,
+        createFollowUpSchedule: false,
+        targetAssets,
+        batchSize,
+        includeStories: input.includeStories,
+        includeVideos: input.includeVideos,
+        includeVirtualTours: input.includeVirtualTours,
+        includeGeoTags: input.includeGeoTags,
+        enableVision: input.enableVision
+      };
+      await this.deps.repository.createContentArtifact({
+        organizationId,
+        clientId,
+        runId: input.action.runId,
+        phase: "media",
+        channel: "gbp_media_saturation",
+        title: `Media Saturation ${stage.toUpperCase()} (D+${dayOffset})`,
+        body: `Scheduled media saturation stage ${stage} for day offset ${dayOffset}.`,
+        status: "scheduled",
+        scheduledFor,
+        metadata: {
+          source: "media_saturation_protocol",
+          dispatchActionType: "media_upload",
+          actionPayload,
+          scheduledByActionId: input.action.id
+        }
+      });
+      scheduled.push({
+        stage,
+        dayOffset,
+        scheduledFor,
+        targetAssets,
+        batchSize
+      });
+    };
+
+    await enqueue("day2", 1, 4, 3);
+    await enqueue("day3_7", 2, 4, 3);
+    await enqueue("day3_7", 3, 5, 4);
+    await enqueue("day3_7", 4, 4, 3);
+    await enqueue("day3_7", 5, 5, 4);
+    await enqueue("day3_7", 6, 4, 3);
+
+    return scheduled;
+  }
+
   private async executeMediaUpload(input: {
     action: BlitzAction;
     context: RunContext;
@@ -4279,7 +4529,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     const resolveBoolean = (value: unknown, fallback: boolean): boolean =>
       typeof value === "boolean" ? value : fallback;
 
-    const targetAssets = clamp(
+    const configuredTargetAssets = clamp(
       Math.round(
         toNumber(
           input.action.payload.targetAssets,
@@ -4289,12 +4539,12 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       5,
       150
     );
-    const batchSize = clamp(
+    const configuredBatchSize = clamp(
       Math.round(toNumber(input.action.payload.batchSize, toNumber(mediaFloodMetadata.batchSize, 12))),
       1,
       30
     );
-    const cooldownMs = clamp(
+    const configuredCooldownMs = clamp(
       Math.round(toNumber(input.action.payload.cooldownMs, toNumber(mediaFloodMetadata.cooldownMs, 350))),
       50,
       5000
@@ -4305,13 +4555,52 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       100
     );
     const includeGeoTags = resolveBoolean(input.action.payload.includeGeoTags, resolveBoolean(mediaFloodMetadata.includeGeoTags, true));
-    const includeStories = resolveBoolean(input.action.payload.includeStories, resolveBoolean(mediaFloodMetadata.includeStories, true));
-    const includeVideos = resolveBoolean(input.action.payload.includeVideos, resolveBoolean(mediaFloodMetadata.includeVideos, true));
-    const includeVirtualTours = resolveBoolean(
+    const configuredIncludeStories = resolveBoolean(
+      input.action.payload.includeStories,
+      resolveBoolean(mediaFloodMetadata.includeStories, true)
+    );
+    const configuredIncludeVideos = resolveBoolean(
+      input.action.payload.includeVideos,
+      resolveBoolean(mediaFloodMetadata.includeVideos, true)
+    );
+    const configuredIncludeVirtualTours = resolveBoolean(
       input.action.payload.includeVirtualTours,
       resolveBoolean(mediaFloodMetadata.includeVirtualTours, true)
     );
     const enableVision = resolveBoolean(input.action.payload.enableVision, resolveBoolean(mediaFloodMetadata.enableVision, true));
+    const minVisionQualityScore = clamp(
+      Math.round(toNumber(input.action.payload.minVisionQualityScore, toNumber(mediaFloodMetadata.minVisionQualityScore, 35))),
+      0,
+      100
+    );
+    const minServiceRelevanceScore = clamp(
+      Math.round(
+        toNumber(input.action.payload.minServiceRelevanceScore, toNumber(mediaFloodMetadata.minServiceRelevanceScore, 45))
+      ),
+      0,
+      100
+    );
+    const allowMediumModerationRisk = resolveBoolean(
+      input.action.payload.allowMediumModerationRisk,
+      resolveBoolean(mediaFloodMetadata.allowMediumModerationRisk, false)
+    );
+    const saturation = this.deriveMediaSaturationConfig({
+      payload: input.action.payload,
+      settingsMetadata,
+      mediaFloodMetadata,
+      targetAssets: configuredTargetAssets,
+      batchSize: configuredBatchSize,
+      cooldownMs: configuredCooldownMs,
+      includeStories: configuredIncludeStories,
+      includeVideos: configuredIncludeVideos,
+      includeVirtualTours: configuredIncludeVirtualTours
+    });
+    const targetAssets = saturation.targetAssets;
+    const batchSize = saturation.batchSize;
+    const cooldownMs = saturation.cooldownMs;
+    const includeStories = saturation.includeStories;
+    const includeVideos = saturation.includeVideos;
+    const includeVirtualTours = saturation.includeVirtualTours;
     const storageBucket = this.resolveMediaFloodStorageBucket({
       context: input.context,
       payload: input.action.payload,
@@ -4348,6 +4637,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     const poolLimit = clamp(targetAssets * 3, 20, 300);
     const candidates: MediaFloodUploadCandidate[] = [];
     const sourceFailures: Array<Record<string, unknown>> = [];
+    const filteredOut: Array<Record<string, unknown>> = [];
 
     for (const asset of allowedAssets) {
       if (candidates.length >= poolLimit) {
@@ -4379,8 +4669,14 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           locationTitle: firstTitle,
           variantType: "video_original",
           cityState: firstCityState,
+          objectives: input.context.settings.objectives,
           tags: asset.tags
         });
+        const baseGeo = {
+          cityState: firstCityState,
+          lat: firstSnapshot?.geo?.lat ?? null,
+          lng: firstSnapshot?.geo?.lng ?? null
+        };
         candidates.push({
           sourceAssetId: asset.id,
           sourceType: "client_bucket",
@@ -4392,6 +4688,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             locationTitle: firstTitle,
             cityState: firstCityState,
             variantType: "video_original",
+            entityHints: fallback.entities,
             ordinal: candidates.length + 1,
             extension: extensionFromMimeType(detectedMime)
           }),
@@ -4399,13 +4696,37 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           altText: fallback.altText,
           tags: fallback.tags,
           locationCategory: this.mediaCategoryForVariant("video_original", "VIDEO"),
-          geoTag: {
-            cityState: firstCityState,
-            lat: firstSnapshot?.geo?.lat ?? null,
-            lng: firstSnapshot?.geo?.lng ?? null
-          },
+          geoTag: baseGeo,
           storagePath: null
         });
+        if (includeStories && candidates.length < poolLimit) {
+          const storyCaption = sanitizeDeclarativeCopy(
+            `${fallback.caption} Need same-day service support? Call now for availability.`,
+            220
+          );
+          candidates.push({
+            sourceAssetId: asset.id,
+            sourceType: "client_bucket",
+            variantType: "video_story",
+            mediaFormat: "VIDEO",
+            mimeType: detectedMime,
+            mediaUrl: directUrl,
+            naturalFileName: this.buildMediaFloodNaturalFileName({
+              locationTitle: firstTitle,
+              cityState: firstCityState,
+              variantType: "video_story",
+              entityHints: fallback.entities,
+              ordinal: candidates.length + 1,
+              extension: extensionFromMimeType(detectedMime)
+            }),
+            caption: storyCaption,
+            altText: fallback.altText,
+            tags: [...new Set([...fallback.tags, "story", "cta"])].slice(0, 16),
+            locationCategory: this.mediaCategoryForVariant("video_story", "VIDEO"),
+            geoTag: baseGeo,
+            storagePath: null
+          });
+        }
         continue;
       }
 
@@ -4455,6 +4776,30 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           if (vision.warning) {
             warnings.push(`${asset.fileName}: ${vision.warning}`);
           }
+          const moderationRiskTooHigh =
+            vision.moderationRisk === "high" || (!allowMediumModerationRisk && vision.moderationRisk === "medium");
+          const relevanceTooLow = vision.serviceRelevanceScore < minServiceRelevanceScore;
+          const qualityTooLow = vision.qualityScore < minVisionQualityScore;
+          if (!vision.isSafe || !vision.isRelevant || moderationRiskTooHigh || relevanceTooLow || qualityTooLow) {
+            filteredOut.push({
+              sourceType: "client_bucket",
+              sourceAssetId: asset.id,
+              fileName: asset.fileName,
+              variantType,
+              moderationRisk: vision.moderationRisk,
+              qualityScore: vision.qualityScore,
+              serviceRelevanceScore: vision.serviceRelevanceScore,
+              rejectionReasons: vision.rejectionReasons ?? [],
+              ruleFlags: {
+                isSafe: vision.isSafe,
+                isRelevant: vision.isRelevant,
+                moderationRiskTooHigh,
+                relevanceTooLow,
+                qualityTooLow
+              }
+            });
+            continue;
+          }
 
           let mediaUrl: string | null = null;
           let storagePath: string | null = null;
@@ -4462,6 +4807,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             locationTitle: firstTitle,
             cityState: firstCityState,
             variantType,
+            entityHints: vision.entities,
             ordinal: candidates.length + 1,
             extension: "jpg"
           });
@@ -4510,7 +4856,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             naturalFileName,
             caption: vision.caption,
             altText: vision.altText,
-            tags: [...new Set([...(asset.tags ?? []), ...(vision.tags ?? [])])].slice(0, 16),
+            tags: [...new Set([...(asset.tags ?? []), ...(vision.tags ?? []), ...vision.entities])].slice(0, 16),
             locationCategory: this.mediaCategoryForVariant(variantType, "PHOTO"),
             geoTag: {
               cityState: firstCityState,
@@ -4544,8 +4890,14 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           locationTitle: firstTitle,
           variantType: "video_original",
           cityState: firstCityState,
+          objectives: input.context.settings.objectives,
           tags: ["external"]
         });
+        const baseGeo = {
+          cityState: firstCityState,
+          lat: firstSnapshot?.geo?.lat ?? null,
+          lng: firstSnapshot?.geo?.lng ?? null
+        };
         candidates.push({
           sourceAssetId: null,
           sourceType: "external_url",
@@ -4557,6 +4909,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             locationTitle: firstTitle,
             cityState: firstCityState,
             variantType: "video_original",
+            entityHints: fallback.entities,
             ordinal: candidates.length + 1,
             extension: extensionFromMimeType(guessedMime)
           }),
@@ -4564,13 +4917,37 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           altText: fallback.altText,
           tags: fallback.tags,
           locationCategory: this.mediaCategoryForVariant("video_original", "VIDEO"),
-          geoTag: {
-            cityState: firstCityState,
-            lat: firstSnapshot?.geo?.lat ?? null,
-            lng: firstSnapshot?.geo?.lng ?? null
-          },
+          geoTag: baseGeo,
           storagePath: null
         });
+        if (includeStories && candidates.length < poolLimit) {
+          const storyCaption = sanitizeDeclarativeCopy(
+            `${fallback.caption} Need same-day service support? Call now for availability.`,
+            220
+          );
+          candidates.push({
+            sourceAssetId: null,
+            sourceType: "external_url",
+            variantType: "video_story",
+            mediaFormat: "VIDEO",
+            mimeType: guessedMime,
+            mediaUrl: sourceUrl,
+            naturalFileName: this.buildMediaFloodNaturalFileName({
+              locationTitle: firstTitle,
+              cityState: firstCityState,
+              variantType: "video_story",
+              entityHints: fallback.entities,
+              ordinal: candidates.length + 1,
+              extension: extensionFromMimeType(guessedMime)
+            }),
+            caption: storyCaption,
+            altText: fallback.altText,
+            tags: [...new Set([...fallback.tags, "story", "cta"])].slice(0, 16),
+            locationCategory: this.mediaCategoryForVariant("video_story", "VIDEO"),
+            geoTag: baseGeo,
+            storagePath: null
+          });
+        }
         continue;
       }
 
@@ -4623,11 +5000,35 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           if (vision.warning) {
             warnings.push(`${sourceUrl}: ${vision.warning}`);
           }
+          const moderationRiskTooHigh =
+            vision.moderationRisk === "high" || (!allowMediumModerationRisk && vision.moderationRisk === "medium");
+          const relevanceTooLow = vision.serviceRelevanceScore < minServiceRelevanceScore;
+          const qualityTooLow = vision.qualityScore < minVisionQualityScore;
+          if (!vision.isSafe || !vision.isRelevant || moderationRiskTooHigh || relevanceTooLow || qualityTooLow) {
+            filteredOut.push({
+              sourceType: "external_url",
+              sourceUrl,
+              variantType,
+              moderationRisk: vision.moderationRisk,
+              qualityScore: vision.qualityScore,
+              serviceRelevanceScore: vision.serviceRelevanceScore,
+              rejectionReasons: vision.rejectionReasons ?? [],
+              ruleFlags: {
+                isSafe: vision.isSafe,
+                isRelevant: vision.isRelevant,
+                moderationRiskTooHigh,
+                relevanceTooLow,
+                qualityTooLow
+              }
+            });
+            continue;
+          }
 
           const naturalFileName = this.buildMediaFloodNaturalFileName({
             locationTitle: firstTitle,
             cityState: firstCityState,
             variantType,
+            entityHints: vision.entities,
             ordinal: candidates.length + 1,
             extension: "jpg"
           });
@@ -4674,7 +5075,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             naturalFileName,
             caption: vision.caption,
             altText: vision.altText,
-            tags: [...new Set(["external", ...(vision.tags ?? [])])].slice(0, 16),
+            tags: [...new Set(["external", ...(vision.tags ?? []), ...vision.entities])].slice(0, 16),
             locationCategory: this.mediaCategoryForVariant(variantType, "PHOTO"),
             geoTag: {
               cityState: firstCityState,
@@ -4693,7 +5094,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
     }
 
-    if (!candidates.length) {
+    const prioritizedCandidates = this.prioritizeMediaCandidates(candidates, saturation.variantPriority);
+
+    if (!prioritizedCandidates.length) {
       return {
         objective,
         status: "no_candidates_generated",
@@ -4702,6 +5105,12 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           clientBucketAssets: allowedAssets.length,
           externalUrls: externalUrls.length
         },
+        protocol: {
+          mode: saturation.protocolMode,
+          stage: saturation.stage
+        },
+        filteredOutCount: filteredOut.length,
+        filteredOut,
         sourceFailures,
         warnings
       };
@@ -4740,7 +5149,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     const guardLimit = targetAssets * 40;
     while (queue.length < targetAssets && guard < guardLimit) {
       const location = input.context.locations[pointer % input.context.locations.length];
-      const candidate = candidates[pointer % candidates.length];
+      const candidate = prioritizedCandidates[pointer % prioritizedCandidates.length];
       pointer += 1;
       guard += 1;
 
@@ -4749,6 +5158,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         continue;
       }
       const key = normalizedUrl.toLowerCase();
+      const dedupeKey = candidate.mediaFormat === "VIDEO" ? `${key}|${candidate.variantType}` : key;
       const existing = existingUrlSets.get(location.locationName) ?? new Set();
       const planned = plannedByLocation.get(location.locationName) ?? new Set();
       const alreadyCount = existingMediaCount.get(location.locationName) ?? existing.size;
@@ -4760,7 +5170,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         skippedExisting += 1;
         continue;
       }
-      if (planned.has(key)) {
+      if (planned.has(dedupeKey)) {
         skippedDuplicate += 1;
         continue;
       }
@@ -4779,7 +5189,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             lng: null
           };
 
-      planned.add(key);
+      planned.add(dedupeKey);
       plannedByLocation.set(location.locationName, planned);
       queue.push({
         location,
@@ -4796,11 +5206,17 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         objective,
         status: "no_uploads_after_dedupe",
         locationCount: input.context.locations.length,
-        generatedCandidateCount: candidates.length,
+        generatedCandidateCount: prioritizedCandidates.length,
         requestedUploads: targetAssets,
         skippedExisting,
         skippedDuplicate,
         skippedCapacity,
+        protocol: {
+          mode: saturation.protocolMode,
+          stage: saturation.stage
+        },
+        filteredOutCount: filteredOut.length,
+        filteredOut,
         sourceFailures,
         warnings
       };
@@ -4890,6 +5306,24 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       acc[key] = (acc[key] ?? 0) + 1;
       return acc;
     }, {});
+    let scheduledFollowUps: Array<Record<string, unknown>> = [];
+    if (saturation.protocolMode === "72h_saturation" && saturation.stage === "day1" && saturation.createFollowUpSchedule) {
+      try {
+        scheduledFollowUps = await this.scheduleMediaSaturationFollowUps({
+          action: input.action,
+          context: input.context,
+          includeStories,
+          includeVideos,
+          includeVirtualTours,
+          includeGeoTags,
+          enableVision
+        });
+      } catch (error) {
+        warnings.push(
+          `Failed to schedule media saturation follow-up stages: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
 
     return {
       objective,
@@ -4899,7 +5333,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         clientBucketAssets: allowedAssets.length,
         externalUrls: externalUrls.length
       },
-      generatedCandidateCount: candidates.length,
+      generatedCandidateCount: prioritizedCandidates.length,
       requestedUploads: targetAssets,
       queuedUploads: queue.length,
       uploadedCount: uploaded.length,
@@ -4917,8 +5351,16 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         includeVideos,
         includeVirtualTours,
         enableVision,
-        storageBucket: storageBucket ?? null
+        storageBucket: storageBucket ?? null,
+        minVisionQualityScore,
+        minServiceRelevanceScore,
+        allowMediumModerationRisk,
+        protocolMode: saturation.protocolMode,
+        protocolStage: saturation.stage
       },
+      filteredOutCount: filteredOut.length,
+      filteredOut,
+      scheduledFollowUps,
       batchSummaries,
       uploaded,
       failed,

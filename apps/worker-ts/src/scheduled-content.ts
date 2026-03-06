@@ -20,6 +20,35 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function resolveDispatchActionType(value: unknown): BlitzAction["actionType"] {
+  if (typeof value !== "string") {
+    return "post_publish";
+  }
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "profile_patch" ||
+    normalized === "media_upload" ||
+    normalized === "post_publish" ||
+    normalized === "review_reply" ||
+    normalized === "hours_update" ||
+    normalized === "attribute_update"
+  ) {
+    return normalized;
+  }
+  return "post_publish";
+}
+
+function resolveRiskTier(value: unknown): BlitzAction["riskTier"] {
+  if (typeof value !== "string") {
+    return "medium";
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "critical") {
+    return normalized;
+  }
+  return "medium";
+}
+
 export interface ScheduledContentDispatcher {
   close(): Promise<void>;
 }
@@ -79,24 +108,40 @@ export function startScheduledContentDispatcher(input: {
           summary: null
         };
 
+        const artifactMetadata = asRecord(artifact.metadata);
+        const dispatchActionType = resolveDispatchActionType(artifactMetadata.dispatchActionType);
+        const dispatchPayload = asRecord(artifactMetadata.actionPayload);
+        const actionPayload =
+          dispatchActionType === "post_publish" && Object.keys(dispatchPayload).length === 0
+            ? {
+                objective: "publish_scheduled_artifact",
+                artifact
+              }
+            : Object.keys(dispatchPayload).length
+              ? dispatchPayload
+              : {
+                  objective: `scheduled_${dispatchActionType}`,
+                  artifactId: artifact.id
+                };
+        const dispatchRiskTier = resolveRiskTier(artifactMetadata.dispatchRiskTier);
+
         const action: BlitzAction = {
           id: randomUUID(),
           runId: run.id,
           organizationId: artifact.organizationId,
           clientId: artifact.clientId,
           phase: artifact.phase,
-          actionType: "post_publish",
-          riskTier: "medium",
+          actionType: dispatchActionType,
+          riskTier: dispatchRiskTier,
           policyDecision: "allow",
           status: "pending",
           actor: "system",
-          idempotencyKey: `scheduled-content:${artifact.id}`,
-          payload: {
-            objective: "publish_scheduled_artifact",
-            artifact
-          },
+          idempotencyKey: `scheduled-content:${artifact.id}:${dispatchActionType}`,
+          payload: actionPayload,
           policySnapshot: {
-            source: "scheduled-content-dispatcher"
+            source: "scheduled-content-dispatcher",
+            dispatchActionType,
+            dispatchRiskTier
           },
           result: null,
           error: null,
