@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
@@ -44,7 +44,7 @@ interface MediaAsset {
 
 interface IntegrationRecord {
   id: string;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   providerAccountId: string;
   scopes: string[];
   tokenExpiresAt: string | null;
@@ -96,6 +96,7 @@ function toInt(value: number, fallback: number, min: number, max: number): numbe
 
 export default function ClientOrchestrationSettingsPage() {
   const { clientId } = useParams<{ clientId: string }>();
+  const searchParams = useSearchParams();
   const { request, buildAuthHeaders } = useDashboardContext();
 
   const [tone, setTone] = useState("professional-local-expert");
@@ -129,6 +130,8 @@ export default function ClientOrchestrationSettingsPage() {
   const [adsAccountId, setAdsAccountId] = useState("");
   const [adsScopes, setAdsScopes] = useState("https://www.googleapis.com/auth/adwords");
   const [adsMetadata, setAdsMetadata] = useState("{}");
+  const [searchConsolePropertyUrl, setSearchConsolePropertyUrl] = useState("");
+  const [syncingAttribution, setSyncingAttribution] = useState(false);
 
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -171,6 +174,24 @@ export default function ClientOrchestrationSettingsPage() {
         setMediaFloodIncludeVirtualTours(mediaFlood.includeVirtualTours !== false);
         setMediaAssets(assetsPayload.assets);
         setIntegrations(integrationsPayload.integrations);
+        const ga4 = integrationsPayload.integrations.find((integration) => integration.provider === "ga4");
+        const ads = integrationsPayload.integrations.find((integration) => integration.provider === "google_ads");
+        const searchConsole = integrationsPayload.integrations.find((integration) => integration.provider === "search_console");
+        if (ga4?.providerAccountId) {
+          setGa4AccountId(ga4.providerAccountId);
+        }
+        if (ads?.providerAccountId) {
+          setAdsAccountId(ads.providerAccountId);
+        }
+        if (searchConsole?.providerAccountId) {
+          setSearchConsolePropertyUrl(searchConsole.providerAccountId);
+        } else if (settings.defaultPostUrl) {
+          try {
+            setSearchConsolePropertyUrl(new URL(settings.defaultPostUrl).origin);
+          } catch {
+            setSearchConsolePropertyUrl("");
+          }
+        }
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : String(err));
@@ -181,6 +202,16 @@ export default function ClientOrchestrationSettingsPage() {
   };
 
   useEffect(loadWorkspace, [clientId, request]);
+
+  useEffect(() => {
+    const connectedProviders = ["ga4", "google_ads", "search_console"].filter(
+      (provider) => searchParams.get(`${provider}_connected`) === "true"
+    );
+    if (connectedProviders.length) {
+      setStatus(`${connectedProviders.join(", ")} connection updated.`);
+      loadWorkspace();
+    }
+  }, [searchParams]);
 
   const saveSettings = async () => {
     setBusy(true);
@@ -398,6 +429,51 @@ export default function ClientOrchestrationSettingsPage() {
     }
   };
 
+  const startGoogleOauth = async (provider: "ga4" | "google_ads" | "search_console") => {
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const providerAccountId =
+        provider === "ga4" ? ga4AccountId.trim() : provider === "google_ads" ? adsAccountId.trim() : searchConsolePropertyUrl.trim();
+      const payload = await request<{ authUrl: string }>(
+        `/api/v1/google/oauth/start?provider=${encodeURIComponent(provider)}&clientId=${encodeURIComponent(clientId)}&providerAccountId=${encodeURIComponent(providerAccountId)}&returnPath=${encodeURIComponent(`/dashboard/clients/${clientId}/settings`)}`,
+      );
+      window.location.assign(payload.authUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  };
+
+  const syncAttribution = async () => {
+    setSyncingAttribution(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const payload = await request<{
+        summary: {
+          rowCount: number;
+          dateFrom: string;
+          dateTo: string;
+          channels: string[];
+        };
+      }>(`/api/v1/clients/${clientId}/attribution/sync`, {
+        method: "POST",
+        body: {
+          window: "30d"
+        }
+      });
+      setStatus(
+        `Attribution sync complete. ${payload.summary.rowCount} rows stored for ${payload.summary.channels.join(", ")} from ${payload.summary.dateFrom} to ${payload.summary.dateTo}.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncingAttribution(false);
+    }
+  };
+
   return (
     <>
       <section className={styles.hero}>
@@ -419,6 +495,9 @@ export default function ClientOrchestrationSettingsPage() {
           </button>
           <button type="button" className={styles.buttonGhost} onClick={loadWorkspace} disabled={busy}>
             Reload
+          </button>
+          <button type="button" className={styles.buttonSecondary} onClick={() => void syncAttribution()} disabled={busy || syncingAttribution}>
+            {syncingAttribution ? "Syncing Attribution..." : "Sync Attribution Now"}
           </button>
         </div>
         {status ? <span className={`${styles.badge} ${styles.statusActive}`}>{status}</span> : null}
@@ -771,9 +850,14 @@ export default function ClientOrchestrationSettingsPage() {
             <span className={styles.label}>Metadata JSON</span>
             <textarea className={styles.textarea} value={ga4Metadata} onChange={(event) => setGa4Metadata(event.target.value)} />
           </label>
-          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void connectIntegration("ga4")}>
-            Connect GA4
-          </button>
+          <div className={styles.inlineActions}>
+            <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void startGoogleOauth("ga4")}>
+              OAuth Connect GA4
+            </button>
+            <button type="button" className={styles.buttonGhost} disabled={busy} onClick={() => void connectIntegration("ga4")}>
+              Save Manual Metadata
+            </button>
+          </div>
         </article>
 
         <article className={`${styles.card} ${styles.col6}`}>
@@ -792,8 +876,34 @@ export default function ClientOrchestrationSettingsPage() {
             <span className={styles.label}>Metadata JSON</span>
             <textarea className={styles.textarea} value={adsMetadata} onChange={(event) => setAdsMetadata(event.target.value)} />
           </label>
-          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void connectIntegration("google_ads")}>
-            Connect Google Ads
+          <div className={styles.inlineActions}>
+            <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void startGoogleOauth("google_ads")}>
+              OAuth Connect Google Ads
+            </button>
+            <button type="button" className={styles.buttonGhost} disabled={busy} onClick={() => void connectIntegration("google_ads")}>
+              Save Manual Metadata
+            </button>
+          </div>
+        </article>
+
+        <article className={`${styles.card} ${styles.col6}`}>
+          <header className={styles.cardHeader}>
+            <h3 className={styles.cardTitle}>Connect Search Console</h3>
+          </header>
+          <label className={styles.field}>
+            <span className={styles.label}>Property URL</span>
+            <input
+              className={styles.input}
+              value={searchConsolePropertyUrl}
+              onChange={(event) => setSearchConsolePropertyUrl(event.target.value)}
+              placeholder="sc-domain:example.com or https://www.example.com/"
+            />
+          </label>
+          <p className={styles.cardHint}>
+            Use the verified property URL you want mapped into attribution for this client.
+          </p>
+          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void startGoogleOauth("search_console")}>
+            OAuth Connect Search Console
           </button>
         </article>
 
@@ -810,6 +920,7 @@ export default function ClientOrchestrationSettingsPage() {
                   <th>Scopes</th>
                   <th>Connected</th>
                   <th>Token Expires</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -820,11 +931,12 @@ export default function ClientOrchestrationSettingsPage() {
                     <td>{integration.scopes.join(", ") || "-"}</td>
                     <td>{formatDate(integration.connectedAt)}</td>
                     <td>{integration.tokenExpiresAt ? formatDate(integration.tokenExpiresAt) : "-"}</td>
+                    <td>{integration.isActive ? "active" : "inactive"}</td>
                   </tr>
                 ))}
                 {!integrations.length ? (
                   <tr>
-                    <td colSpan={5}>
+                    <td colSpan={6}>
                       <p className={styles.empty}>No integrations connected for this client yet.</p>
                     </td>
                   </tr>

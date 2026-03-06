@@ -4,11 +4,18 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 
-from app.attribution import coerce_date_range, map_ga4_rows, map_gbp_rows, map_google_ads_rows
+from app.attribution import (
+    coerce_date_range,
+    map_ga4_rows,
+    map_gbp_rows,
+    map_google_ads_rows,
+    map_search_console_rows,
+)
 from app.config import load_settings, resolve_oauth_client_secrets_file
 from app.ga4_client import fetch_ga4_daily_metrics
 from app.gaql_queries import daily_metrics_query
 from app.google_ads_client import GoogleAdsAPIError, GoogleAdsClient
+from app.search_console_client import fetch_search_console_daily_metrics
 from app.models import (
     AttributionSyncRequest,
     AttributionSyncResponse,
@@ -81,6 +88,15 @@ def attribution_sync(request: AttributionSyncRequest) -> AttributionSyncResponse
             rows.extend(map_ga4_rows(request, ga4_rows))
         except Exception as error:
             raise HTTPException(status_code=502, detail=f"GA4 sync failed: {error}") from error
+
+    if request.search_console is not None:
+        try:
+            search_console_rows = fetch_search_console_daily_metrics(
+                request.search_console, date_from, date_to
+            )
+            rows.extend(map_search_console_rows(request, search_console_rows))
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=f"Search Console sync failed: {error}") from error
 
     rows.extend(map_gbp_rows(request))
     rows.sort(key=lambda row: (str(row.date), row.channel))

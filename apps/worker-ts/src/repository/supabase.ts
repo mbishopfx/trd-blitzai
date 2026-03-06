@@ -13,6 +13,7 @@ import type {
   BlitzRunRepository,
   ClientMediaAssetRecord,
   ClientOrchestrationSettingsRecord,
+  ContentArtifactRecord,
   CreateActionNeededInput,
   IntegrationConnectionPatch,
   IntegrationConnectionRecord,
@@ -631,6 +632,92 @@ export class SupabaseBlitzRepository implements BlitzRunRepository {
     );
     if (error) {
       throw new Error(`Failed to write review reply history for ${input.reviewId}: ${error.message}`);
+    }
+  }
+
+  async createContentArtifact(input: ContentArtifactRecord): Promise<void> {
+    const { error } = await this.supabase.from("content_artifacts").insert({
+      organization_id: input.organizationId,
+      client_id: input.clientId,
+      run_id: input.runId ?? null,
+      phase: input.phase,
+      channel: input.channel ?? "gbp",
+      title: input.title ?? null,
+      body: input.body,
+      metadata: input.metadata ?? {},
+      status: input.status ?? "draft",
+      scheduled_for: input.scheduledFor ?? null,
+      published_at: input.publishedAt ?? null
+    });
+    if (error) {
+      throw new Error(`Failed to create content artifact for client ${input.clientId}: ${error.message}`);
+    }
+  }
+
+  async listIntegrationConnections(clientId: string): Promise<IntegrationConnectionRecord[]> {
+    const { data, error } = await this.supabase
+      .from("integration_connections")
+      .select(
+        "id,organization_id,client_id,provider,provider_account_id,scopes,encrypted_token_payload,metadata,token_expires_at,connected_at,last_refresh_at,is_active,created_at,updated_at"
+      )
+      .eq("client_id", clientId)
+      .eq("is_active", true)
+      .order("updated_at", { ascending: false });
+    if (error) {
+      throw new Error(`Failed to list integration connections for client ${clientId}: ${error.message}`);
+    }
+    return (data ?? []).map((row) => mapIntegrationConnectionRow(row as Record<string, unknown>));
+  }
+
+  async listDueContentArtifacts(limit: number): Promise<Array<ContentArtifactRecord & { id: string }>> {
+    const { data, error } = await this.supabase
+      .from("content_artifacts")
+      .select("id,organization_id,client_id,run_id,phase,channel,title,body,metadata,status,scheduled_for,published_at,created_at")
+      .eq("status", "scheduled")
+      .or(`scheduled_for.is.null,scheduled_for.lte.${nowIso()}`)
+      .order("scheduled_for", { ascending: true, nullsFirst: true })
+      .order("created_at", { ascending: true })
+      .limit(Math.max(1, limit));
+    if (error) {
+      throw new Error(`Failed to list due content artifacts: ${error.message}`);
+    }
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      clientId: String(row.client_id),
+      runId: typeof row.run_id === "string" ? row.run_id : null,
+      phase: String(row.phase) as ContentArtifactRecord["phase"],
+      channel: typeof row.channel === "string" ? row.channel : "gbp",
+      title: typeof row.title === "string" ? row.title : null,
+      body: String(row.body ?? ""),
+      metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+      status: String(row.status) as NonNullable<ContentArtifactRecord["status"]>,
+      scheduledFor: toIsoOrNull(row.scheduled_for),
+      publishedAt: toIsoOrNull(row.published_at)
+    }));
+  }
+
+  async updateContentArtifact(
+    artifactId: string,
+    patch: Partial<Pick<ContentArtifactRecord, "status" | "metadata" | "scheduledFor" | "publishedAt">>
+  ): Promise<void> {
+    const updatePatch: Record<string, unknown> = {};
+    if (patch.status !== undefined) {
+      updatePatch.status = patch.status;
+    }
+    if (patch.metadata !== undefined) {
+      updatePatch.metadata = patch.metadata;
+    }
+    if (patch.scheduledFor !== undefined) {
+      updatePatch.scheduled_for = patch.scheduledFor;
+    }
+    if (patch.publishedAt !== undefined) {
+      updatePatch.published_at = patch.publishedAt;
+    }
+
+    const { error } = await this.supabase.from("content_artifacts").update(updatePatch).eq("id", artifactId);
+    if (error) {
+      throw new Error(`Failed to update content artifact ${artifactId}: ${error.message}`);
     }
   }
 

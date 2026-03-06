@@ -9,6 +9,7 @@ import { DefaultBlitzPlanner } from "./planner";
 import { startBlitzWorker } from "./queue";
 import { InMemoryBlitzRepository } from "./repository/in-memory";
 import { SupabaseBlitzRepository } from "./repository/supabase";
+import { startScheduledContentDispatcher } from "./scheduled-content";
 import { getSupabaseServiceClient, isSupabaseConfigured } from "./supabase";
 import type { ActionExecutor, BlitzRunRepository } from "./types";
 
@@ -78,12 +79,27 @@ async function main(): Promise<void> {
   if (process.env.REDIS_URL) {
     logger.info("starting BullMQ worker mode");
     const repository = createQueueRepository();
+    const executor = createExecutor(repository, { allowLive: true });
     startBlitzWorker({
       repository,
       planner: new DefaultBlitzPlanner(),
-      executor: createExecutor(repository, { allowLive: true }),
+      executor,
       events: new LogEventPublisher()
     });
+    const scheduledDispatcherEnabled = (process.env.SCHEDULED_CONTENT_DISPATCHER_ENABLED ?? "false")
+      .trim()
+      .toLowerCase() === "true";
+    if (scheduledDispatcherEnabled) {
+      startScheduledContentDispatcher({
+        repository,
+        executor,
+        intervalMs: Number(process.env.SCHEDULED_CONTENT_POLL_MS ?? "60000"),
+        batchSize: Number(process.env.SCHEDULED_CONTENT_BATCH_SIZE ?? "8")
+      });
+      logger.info("scheduled content dispatcher enabled");
+    } else {
+      logger.info("scheduled content dispatcher disabled (set SCHEDULED_CONTENT_DISPATCHER_ENABLED=true to enable)");
+    }
     return;
   }
 

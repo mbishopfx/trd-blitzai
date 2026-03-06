@@ -65,13 +65,16 @@ export class DefaultBlitzPlanner implements ActionPlanner {
         return [
           baseAction("content", "post_publish", "medium", {
             objective: "geo_content_burst",
-            postCount: 10,
-            cadence: "initial"
+            postCount: 12,
+            cadence: "initial",
+            archetypes: ["offer", "event", "proof", "did_you_know"],
+            minQaPairs: 20,
+            maxQaPairs: 24
           }),
           baseAction("content", "post_publish", "medium", {
             objective: "schedule_follow_up_posts",
             cadence: "jittered",
-            windows: ["+2d", "+4d", "+7d"]
+            windows: ["+2d", "+4d", "+7d", "+10d", "+14d", "+18d"]
           })
         ];
       case "reviews":

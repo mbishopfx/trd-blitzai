@@ -39,7 +39,7 @@ export interface IntegrationConnection {
   id: string;
   organizationId: string;
   clientId: string;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   providerAccountId: string;
   scopes: string[];
   encryptedTokenPayload: Record<string, unknown>;
@@ -93,7 +93,7 @@ export interface ClientActionNeeded {
   clientId: string;
   runId: string | null;
   sourceActionId: string | null;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   locationName: string | null;
   locationId: string | null;
   actionType: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
@@ -130,7 +130,24 @@ interface Store {
   actionsNeeded: Map<string, ClientActionNeeded>;
   integrations: Map<string, IntegrationConnection>;
   rollbacks: Map<string, RollbackRecord>;
+  contentArtifacts: Map<string, ContentArtifact>;
   attribution: DailyChannelMetric[];
+}
+
+export interface ContentArtifact {
+  id: string;
+  organizationId: string;
+  clientId: string;
+  runId: string | null;
+  phase: BlitzPhase;
+  channel: string;
+  title: string | null;
+  body: string;
+  metadata: Record<string, unknown>;
+  status: "draft" | "scheduled" | "published" | "failed";
+  scheduledFor: string | null;
+  publishedAt: string | null;
+  createdAt: string;
 }
 
 const globalStore = globalThis as typeof globalThis & {
@@ -170,6 +187,7 @@ function getStore(): Store {
       actionsNeeded: new Map(),
       integrations: new Map(),
       rollbacks: new Map(),
+      contentArtifacts: new Map(),
       attribution: []
     };
   }
@@ -385,6 +403,24 @@ function mapClientActionNeededRow(row: Record<string, unknown>): ClientActionNee
     executedAt: toIsoOrNull(row.executed_at),
     createdAt: String(row.created_at ?? nowIso()),
     updatedAt: String(row.updated_at ?? nowIso())
+  };
+}
+
+function mapContentArtifactRow(row: Record<string, unknown>): ContentArtifact {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    clientId: String(row.client_id),
+    runId: typeof row.run_id === "string" ? row.run_id : null,
+    phase: String(row.phase) as BlitzPhase,
+    channel: typeof row.channel === "string" ? row.channel : "gbp",
+    title: typeof row.title === "string" ? row.title : null,
+    body: String(row.body ?? ""),
+    metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    status: String(row.status) as ContentArtifact["status"],
+    scheduledFor: toIsoOrNull(row.scheduled_for),
+    publishedAt: toIsoOrNull(row.published_at),
+    createdAt: String(row.created_at ?? nowIso())
   };
 }
 
@@ -1024,7 +1060,7 @@ export async function getAutopilotPolicy(clientId: string): Promise<BlitzAutopil
 export async function connectIntegration(input: {
   organizationId: string;
   clientId: string;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   providerAccountId: string;
   scopes: string[];
   encryptedTokenPayload: Record<string, unknown>;
@@ -1114,6 +1150,179 @@ export async function listClientIntegrations(clientId: string): Promise<Integrat
   }
 
   return (rows ?? []).map((row) => mapIntegrationRow(row as Record<string, unknown>));
+}
+
+export async function updateIntegrationConnection(
+  connectionId: string,
+  patch: {
+    providerAccountId?: string;
+    scopes?: string[];
+    encryptedTokenPayload?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+    tokenExpiresAt?: string | null;
+    lastRefreshAt?: string | null;
+    isActive?: boolean;
+  }
+): Promise<IntegrationConnection | null> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const current = store.integrations.get(connectionId);
+    if (!current) {
+      return null;
+    }
+    const next: IntegrationConnection = {
+      ...current,
+      providerAccountId: patch.providerAccountId ?? current.providerAccountId,
+      scopes: patch.scopes ?? current.scopes,
+      encryptedTokenPayload: patch.encryptedTokenPayload ?? current.encryptedTokenPayload,
+      metadata: patch.metadata ?? current.metadata,
+      tokenExpiresAt: patch.tokenExpiresAt ?? current.tokenExpiresAt,
+      lastRefreshAt: patch.lastRefreshAt ?? current.lastRefreshAt,
+      isActive: patch.isActive ?? current.isActive,
+      updatedAt: nowIso()
+    };
+    store.integrations.set(connectionId, next);
+    return next;
+  }
+
+  const updatePatch: Record<string, unknown> = {};
+  if (patch.providerAccountId !== undefined) {
+    updatePatch.provider_account_id = patch.providerAccountId;
+  }
+  if (patch.scopes !== undefined) {
+    updatePatch.scopes = patch.scopes;
+  }
+  if (patch.encryptedTokenPayload !== undefined) {
+    updatePatch.encrypted_token_payload = patch.encryptedTokenPayload;
+  }
+  if (patch.metadata !== undefined) {
+    updatePatch.metadata = patch.metadata;
+  }
+  if (patch.tokenExpiresAt !== undefined) {
+    updatePatch.token_expires_at = patch.tokenExpiresAt;
+  }
+  if (patch.lastRefreshAt !== undefined) {
+    updatePatch.last_refresh_at = patch.lastRefreshAt;
+  }
+  if (patch.isActive !== undefined) {
+    updatePatch.is_active = patch.isActive;
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("integration_connections")
+    .update(updatePatch)
+    .eq("id", connectionId)
+    .select(
+      "id,organization_id,client_id,provider,provider_account_id,scopes,encrypted_token_payload,metadata,token_expires_at,connected_at,last_refresh_at,is_active,created_at,updated_at"
+    )
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to update integration connection: ${error.message}`);
+  }
+
+  return data ? mapIntegrationRow(data as Record<string, unknown>) : null;
+}
+
+export async function listClientContentArtifacts(
+  clientId: string,
+  options?: {
+    channel?: string;
+    phase?: BlitzPhase;
+    status?: ContentArtifact["status"] | "all";
+    limit?: number;
+  }
+): Promise<ContentArtifact[]> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 100, 500));
+
+  if (!isSupabaseConfigured()) {
+    let rows = [...getStore().contentArtifacts.values()].filter((artifact) => artifact.clientId === clientId);
+    if (options?.channel) {
+      rows = rows.filter((artifact) => artifact.channel === options.channel);
+    }
+    if (options?.phase) {
+      rows = rows.filter((artifact) => artifact.phase === options.phase);
+    }
+    if (options?.status && options.status !== "all") {
+      rows = rows.filter((artifact) => artifact.status === options.status);
+    }
+    return rows
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, limit);
+  }
+
+  let query = getSupabaseServiceClient()
+    .from("content_artifacts")
+    .select("id,organization_id,client_id,run_id,phase,channel,title,body,metadata,status,scheduled_for,published_at,created_at")
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (options?.channel) {
+    query = query.eq("channel", options.channel);
+  }
+  if (options?.phase) {
+    query = query.eq("phase", options.phase);
+  }
+  if (options?.status && options.status !== "all") {
+    query = query.eq("status", options.status);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`Failed to list content artifacts: ${error.message}`);
+  }
+  return (data ?? []).map((row) => mapContentArtifactRow(row as Record<string, unknown>));
+}
+
+export async function updateContentArtifact(
+  artifactId: string,
+  patch: {
+    status?: ContentArtifact["status"];
+    metadata?: Record<string, unknown>;
+    scheduledFor?: string | null;
+    publishedAt?: string | null;
+  }
+): Promise<ContentArtifact | null> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const current = store.contentArtifacts.get(artifactId);
+    if (!current) {
+      return null;
+    }
+    const next: ContentArtifact = {
+      ...current,
+      status: patch.status ?? current.status,
+      metadata: patch.metadata ?? current.metadata,
+      scheduledFor: patch.scheduledFor ?? current.scheduledFor,
+      publishedAt: patch.publishedAt ?? current.publishedAt
+    };
+    store.contentArtifacts.set(artifactId, next);
+    return next;
+  }
+
+  const updatePatch: Record<string, unknown> = {};
+  if (patch.status !== undefined) {
+    updatePatch.status = patch.status;
+  }
+  if (patch.metadata !== undefined) {
+    updatePatch.metadata = patch.metadata;
+  }
+  if (patch.scheduledFor !== undefined) {
+    updatePatch.scheduled_for = patch.scheduledFor;
+  }
+  if (patch.publishedAt !== undefined) {
+    updatePatch.published_at = patch.publishedAt;
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("content_artifacts")
+    .update(updatePatch)
+    .eq("id", artifactId)
+    .select("id,organization_id,client_id,run_id,phase,channel,title,body,metadata,status,scheduled_for,published_at,created_at")
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to update content artifact: ${error.message}`);
+  }
+  return data ? mapContentArtifactRow(data as Record<string, unknown>) : null;
 }
 
 export async function createClientMediaAsset(input: {
@@ -1603,6 +1812,66 @@ export async function addAttributionRecord(record: DailyChannelMetric): Promise<
   });
   if (error) {
     throw new Error(`Failed to add attribution record: ${error.message}`);
+  }
+}
+
+export async function replaceAttributionRange(input: {
+  clientId: string;
+  organizationId: string;
+  dateFrom: string;
+  dateTo: string;
+  channels: DailyChannelMetric["channel"][];
+  rows: DailyChannelMetric[];
+}): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const channelSet = new Set(input.channels);
+    store.attribution = store.attribution.filter((row) => {
+      return !(
+        row.clientId === input.clientId &&
+        channelSet.has(row.channel) &&
+        row.date >= input.dateFrom &&
+        row.date <= input.dateTo
+      );
+    });
+    store.attribution.push(...input.rows);
+    return;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { error: deleteError } = await supabase
+    .from("attribution_daily")
+    .delete()
+    .eq("client_id", input.clientId)
+    .gte("date", input.dateFrom)
+    .lte("date", input.dateTo)
+    .in("channel", input.channels);
+  if (deleteError) {
+    throw new Error(`Failed to clear attribution range: ${deleteError.message}`);
+  }
+
+  if (!input.rows.length) {
+    return;
+  }
+
+  const payload = input.rows.map((record) => ({
+    organization_id: record.organizationId,
+    client_id: record.clientId,
+    location_id: record.locationId,
+    date: record.date,
+    channel: record.channel,
+    impressions: record.impressions,
+    clicks: record.clicks,
+    calls: record.calls,
+    directions: record.directions,
+    conversions: record.conversions,
+    spend: record.spend,
+    conversion_value: record.conversionValue,
+    source_payload: record.sourcePayload
+  }));
+  const { error: insertError } = await supabase.from("attribution_daily").insert(payload);
+  if (insertError) {
+    throw new Error(`Failed to write attribution range: ${insertError.message}`);
   }
 }
 

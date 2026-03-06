@@ -2,7 +2,8 @@ import type {
   DailyChannelMetric,
   Ga4MetricRow,
   GbpNativeMetricRow,
-  GoogleAdsMetricRow
+  GoogleAdsMetricRow,
+  SearchConsoleMetricRow
 } from "./contracts";
 
 interface BaseIdentity {
@@ -55,6 +56,22 @@ export function mapGoogleAdsMetrics(identity: BaseIdentity, rows: GoogleAdsMetri
     conversions: row.conversions,
     spend: row.costMicros / 1_000_000,
     conversionValue: row.conversionValue,
+    sourcePayload: row as unknown as Record<string, unknown>
+  }));
+}
+
+export function mapSearchConsoleMetrics(identity: BaseIdentity, rows: SearchConsoleMetricRow[]): DailyChannelMetric[] {
+  return rows.map((row) => ({
+    ...identity,
+    date: row.date,
+    channel: "search_console",
+    impressions: row.impressions,
+    clicks: row.clicks,
+    calls: 0,
+    directions: 0,
+    conversions: 0,
+    spend: 0,
+    conversionValue: 0,
     sourcePayload: row as unknown as Record<string, unknown>
   }));
 }

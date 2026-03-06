@@ -1,4 +1,4 @@
-export type AttributionChannel = "gbp" | "ga4" | "google_ads";
+export type AttributionChannel = "gbp" | "ga4" | "google_ads" | "search_console";
 
 export interface DailyChannelMetric {
   organizationId: string;
@@ -67,4 +67,10 @@ export interface GoogleAdsMetricRow {
   conversions: number;
   costMicros: number;
   conversionValue: number;
+}
+
+export interface SearchConsoleMetricRow {
+  date: string;
+  impressions: number;
+  clicks: number;
 }

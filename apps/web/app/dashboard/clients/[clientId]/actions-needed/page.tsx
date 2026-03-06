@@ -10,7 +10,7 @@ type ActionNeededStatus = "pending" | "approved" | "executed" | "failed" | "dism
 
 interface ActionNeededRecord {
   id: string;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   locationName: string | null;
   locationId: string | null;
   actionType: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
@@ -75,6 +75,12 @@ function operationSummary(payload: Record<string, unknown>): string {
   return updateMask.join(", ");
 }
 
+function operationDetails(payload: Record<string, unknown>): Array<Record<string, unknown>> {
+  const executionPlan = asRecord(payload.executionPlan);
+  const operations = Array.isArray(executionPlan.operations) ? executionPlan.operations : [];
+  return operations.map((entry) => asRecord(entry)).filter((entry) => Object.keys(entry).length > 0);
+}
+
 export default function ClientActionsNeededPage() {
   const { clientId } = useParams<{ clientId: string }>();
   const { request } = useDashboardContext();
@@ -85,10 +91,15 @@ export default function ClientActionsNeededPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const pendingCount = useMemo(
     () => actionsNeeded.filter((item) => item.status === "pending").length,
     [actionsNeeded]
+  );
+  const selectedItem = useMemo(
+    () => actionsNeeded.find((item) => item.id === selectedId) ?? actionsNeeded[0] ?? null,
+    [actionsNeeded, selectedId]
   );
 
   const load = () => {
@@ -99,6 +110,9 @@ export default function ClientActionsNeededPage() {
     )
       .then((payload) => {
         setActionsNeeded(payload.actionsNeeded);
+        if (!selectedId && payload.actionsNeeded[0]) {
+          setSelectedId(payload.actionsNeeded[0].id);
+        }
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : String(err));
@@ -192,7 +206,7 @@ export default function ClientActionsNeededPage() {
       </section>
 
       <section className={styles.grid}>
-        <article className={`${styles.card} ${styles.col12}`}>
+        <article className={`${styles.card} ${styles.col7}`}>
           <header className={styles.cardHeader}>
             <h3 className={styles.cardTitle}>Queued Tasks ({actionsNeeded.length})</h3>
           </header>
@@ -215,7 +229,7 @@ export default function ClientActionsNeededPage() {
                   const operations = operationSummary(payload);
                   const busy = busyId === item.id;
                   return (
-                    <tr key={item.id}>
+                    <tr key={item.id} onClick={() => setSelectedId(item.id)} style={{ cursor: "pointer" }}>
                       <td>
                         <strong>{item.title}</strong>
                         <p className={styles.empty}>{item.description ?? "No description"}</p>
@@ -263,6 +277,57 @@ export default function ClientActionsNeededPage() {
               </tbody>
             </table>
           </div>
+        </article>
+
+        <article className={`${styles.card} ${styles.col5}`}>
+          <header className={styles.cardHeader}>
+            <h3 className={styles.cardTitle}>Operator Review</h3>
+          </header>
+          {selectedItem ? (
+            <div className={styles.stack}>
+              <div className={styles.kpiRow}>
+                <span className={styles.badge}>{selectedItem.provider}</span>
+                <span className={styles.badge}>{selectedItem.actionType}</span>
+                <span className={styles.badge}>{selectedItem.riskTier}</span>
+                <span className={styles.badge}>{selectedItem.status}</span>
+              </div>
+              <p className={styles.empty}><strong>{selectedItem.title}</strong></p>
+              <p className={styles.cardHint}>{selectedItem.description ?? "No description"}</p>
+              <p className={styles.empty}>Location: {selectedItem.locationName ?? selectedItem.locationId ?? "N/A"}</p>
+              <p className={styles.empty}>Created: {formatDate(selectedItem.createdAt)}</p>
+              <p className={styles.empty}>Approved: {formatDate(selectedItem.approvedAt)}</p>
+              <p className={styles.empty}>Executed: {formatDate(selectedItem.executedAt)}</p>
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Operation</th>
+                      <th>Payload</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {operationDetails(selectedItem.payload).map((operation, index) => (
+                      <tr key={`${selectedItem.id}-operation-${index}`}>
+                        <td>{typeof operation.kind === "string" ? operation.kind : "unknown"}</td>
+                        <td>
+                          <pre className={styles.codeBlock}>{JSON.stringify(operation, null, 2)}</pre>
+                        </td>
+                      </tr>
+                    ))}
+                    {operationDetails(selectedItem.payload).length === 0 ? (
+                      <tr>
+                        <td colSpan={2}>
+                          <pre className={styles.codeBlock}>{JSON.stringify(selectedItem.payload, null, 2)}</pre>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <p className={styles.empty}>Select a queued action to inspect its exact execution plan.</p>
+          )}
         </article>
       </section>
     </>

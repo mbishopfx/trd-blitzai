@@ -13,6 +13,7 @@ import type {
   ActionLogRecord,
   BlitzRunRepository,
   ClientMediaAssetRecord,
+  ContentArtifactRecord,
   CreateActionNeededInput,
   ClientOrchestrationSettingsRecord,
   IntegrationConnectionPatch,
@@ -29,6 +30,7 @@ interface InMemoryState {
   mediaAssets: Map<string, ClientMediaAssetRecord>;
   actionsNeeded: Map<string, ActionNeededRecord>;
   reviewReplies: Map<string, ReviewReplyHistoryRecord>;
+  contentArtifacts: Array<ContentArtifactRecord & { id: string; createdAt: string }>;
   logs: ActionLogRecord[];
   rollbacks: RollbackRecord[];
   integrations: Map<string, IntegrationConnectionRecord>;
@@ -103,6 +105,7 @@ export class InMemoryBlitzRepository implements BlitzRunRepository {
       mediaAssets: new Map((seed?.mediaAssets ?? []).map((asset) => [asset.id, asset])),
       actionsNeeded: new Map(),
       reviewReplies: new Map(),
+      contentArtifacts: [],
       logs: [],
       rollbacks: [],
       integrations: new Map((seed?.integrations ?? []).map((connection) => [connection.id, connection]))
@@ -272,6 +275,64 @@ export class InMemoryBlitzRepository implements BlitzRunRepository {
   async recordReviewReplyHistory(input: ReviewReplyHistoryRecord): Promise<void> {
     const key = `${input.clientId}:${input.reviewId}`;
     this.state.reviewReplies.set(key, input);
+  }
+
+  async createContentArtifact(input: ContentArtifactRecord): Promise<void> {
+    this.state.contentArtifacts.push({
+      id: randomUUID(),
+      ...input,
+      channel: input.channel ?? "gbp",
+      title: input.title ?? null,
+      metadata: input.metadata ?? {},
+      status: input.status ?? "draft",
+      scheduledFor: input.scheduledFor ?? null,
+      publishedAt: input.publishedAt ?? null,
+      createdAt: nowIso()
+    });
+  }
+
+  async listIntegrationConnections(clientId: string): Promise<IntegrationConnectionRecord[]> {
+    return [...this.state.integrations.values()]
+      .filter((connection) => connection.clientId === clientId && connection.isActive)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }
+
+  async listDueContentArtifacts(limit: number): Promise<Array<ContentArtifactRecord & { id: string }>> {
+    const now = Date.now();
+    return this.state.contentArtifacts
+      .filter((artifact) => {
+        if (artifact.status !== "scheduled") {
+          return false;
+        }
+        if (!artifact.scheduledFor) {
+          return true;
+        }
+        return new Date(artifact.scheduledFor).getTime() <= now;
+      })
+      .sort((a, b) => {
+        const aTime = a.scheduledFor ? new Date(a.scheduledFor).getTime() : 0;
+        const bTime = b.scheduledFor ? new Date(b.scheduledFor).getTime() : 0;
+        return aTime - bTime;
+      })
+      .slice(0, Math.max(1, limit))
+      .map(({ id, createdAt, ...artifact }) => ({
+        id,
+        ...artifact
+      }));
+  }
+
+  async updateContentArtifact(
+    artifactId: string,
+    patch: Partial<Pick<ContentArtifactRecord, "status" | "metadata" | "scheduledFor" | "publishedAt">>
+  ): Promise<void> {
+    const index = this.state.contentArtifacts.findIndex((artifact) => artifact.id === artifactId);
+    if (index < 0) {
+      throw new Error(`content artifact not found: ${artifactId}`);
+    }
+    this.state.contentArtifacts[index] = {
+      ...this.state.contentArtifacts[index],
+      ...patch
+    };
   }
 
   async createActionNeeded(input: CreateActionNeededInput): Promise<ActionNeededRecord> {

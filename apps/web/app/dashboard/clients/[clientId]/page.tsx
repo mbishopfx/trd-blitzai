@@ -28,7 +28,7 @@ interface BlitzRunRecord {
 
 interface IntegrationRecord {
   id: string;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   providerAccountId: string;
   scopes: string[];
   tokenExpiresAt: string | null;
@@ -65,6 +65,8 @@ export default function ClientOverviewPage() {
   const [integrations, setIntegrations] = useState<IntegrationRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [syncingAttribution, setSyncingAttribution] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -93,6 +95,26 @@ export default function ClientOverviewPage() {
     return styles.statusIdle;
   }, [payload]);
 
+  const syncAttribution = async () => {
+    setSyncingAttribution(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const result = await request<{ summary: { rowCount: number; channels: string[] } }>(
+        `/api/v1/clients/${clientId}/attribution/sync`,
+        {
+          method: "POST",
+          body: { window: "30d" }
+        }
+      );
+      setStatus(`Attribution synced: ${result.summary.rowCount} rows across ${result.summary.channels.join(", ")}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncingAttribution(false);
+    }
+  };
+
   return (
     <>
       <section className={styles.hero}>
@@ -101,6 +123,12 @@ export default function ClientOverviewPage() {
           Monitor live Blitz worker state, integration health, and the most recent run for this GBP client.
         </p>
         <ClientTabs clientId={clientId} />
+        <div className={styles.inlineActions}>
+          <button type="button" className={styles.buttonSecondary} onClick={() => void syncAttribution()} disabled={syncingAttribution}>
+            {syncingAttribution ? "Syncing Attribution..." : "Sync Attribution"}
+          </button>
+        </div>
+        {status ? <span className={`${styles.badge} ${styles.statusActive}`}>{status}</span> : null}
         {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
       </section>
 

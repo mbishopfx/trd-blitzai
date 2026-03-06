@@ -105,6 +105,32 @@ def map_gbp_rows(input_data: AttributionSyncRequest) -> list[AttributionDailyMet
     return mapped
 
 
+def map_search_console_rows(
+    input_data: AttributionSyncRequest, rows: list[dict[str, Any]]
+) -> list[AttributionDailyMetric]:
+    mapped: list[AttributionDailyMetric] = []
+    for row in rows:
+        mapped.append(
+            AttributionDailyMetric(
+                organization_id=input_data.organization_id,
+                client_id=input_data.client_id,
+                location_id=input_data.location_id,
+                date=row.get("date"),
+                channel="search_console",
+                impressions=_as_int(row.get("impressions")),
+                clicks=_as_int(row.get("clicks")),
+                calls=0,
+                directions=0,
+                conversions=0.0,
+                spend=0.0,
+                conversion_value=0.0,
+                source_payload=row,
+            )
+        )
+
+    return mapped
+
+
 def coerce_date_range(date_from: date, date_to: date) -> tuple[date, date]:
     if date_from <= date_to:
         return date_from, date_to

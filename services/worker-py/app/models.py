@@ -30,6 +30,11 @@ class Ga4ConnectionInput(BaseModel):
     property_id: str = Field(min_length=3)
 
 
+class SearchConsoleConnectionInput(BaseModel):
+    access_token: str = Field(min_length=10)
+    property_url: str = Field(min_length=3)
+
+
 class GbpMetricRow(BaseModel):
     date: date
     impressions: int = 0
@@ -51,6 +56,7 @@ class AttributionSyncRequest(BaseModel):
     date_to: date
     google_ads: Optional[AttributionSyncGoogleAdsInput] = None
     ga4: Optional[Ga4ConnectionInput] = None
+    search_console: Optional[SearchConsoleConnectionInput] = None
     gbp_rows: list[GbpMetricRow] = Field(default_factory=list)
 
 
@@ -59,7 +65,7 @@ class AttributionDailyMetric(BaseModel):
     client_id: str
     location_id: Optional[str]
     date: date
-    channel: Literal["gbp", "ga4", "google_ads"]
+    channel: Literal["gbp", "ga4", "google_ads", "search_console"]
     impressions: int
     clicks: int
     calls: int

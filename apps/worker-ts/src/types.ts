@@ -67,7 +67,7 @@ export interface IntegrationConnectionRecord {
   id: string;
   organizationId: string;
   clientId: string;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   providerAccountId: string;
   scopes: string[];
   encryptedTokenPayload: Record<string, unknown>;
@@ -137,13 +137,27 @@ export interface ReviewReplyHistoryRecord {
   error?: string | null;
 }
 
+export interface ContentArtifactRecord {
+  organizationId: string;
+  clientId: string;
+  runId?: string | null;
+  phase: BlitzPhase;
+  channel?: string;
+  title?: string | null;
+  body: string;
+  metadata?: Record<string, unknown>;
+  status?: "draft" | "scheduled" | "published" | "failed";
+  scheduledFor?: string | null;
+  publishedAt?: string | null;
+}
+
 export interface ActionNeededRecord {
   id: string;
   organizationId: string;
   clientId: string;
   runId: string | null;
   sourceActionId: string | null;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   locationName: string | null;
   locationId: string | null;
   actionType: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
@@ -166,7 +180,7 @@ export interface CreateActionNeededInput {
   clientId: string;
   runId?: string | null;
   sourceActionId?: string | null;
-  provider: "gbp" | "ga4" | "google_ads" | "ghl";
+  provider: "gbp" | "ga4" | "google_ads" | "search_console" | "ghl";
   locationName?: string | null;
   locationId?: string | null;
   actionType: "profile_patch" | "media_upload" | "post_publish" | "review_reply" | "hours_update" | "attribute_update";
@@ -212,7 +226,14 @@ export interface BlitzRunRepository {
   listClientMediaAssets(clientId: string): Promise<ClientMediaAssetRecord[]>;
   hasPostedReplyHistory(clientId: string, reviewId: string): Promise<boolean>;
   recordReviewReplyHistory(input: ReviewReplyHistoryRecord): Promise<void>;
+  createContentArtifact(input: ContentArtifactRecord): Promise<void>;
   createActionNeeded(input: CreateActionNeededInput): Promise<ActionNeededRecord>;
+  listIntegrationConnections?(clientId: string): Promise<IntegrationConnectionRecord[]>;
+  listDueContentArtifacts?(limit: number): Promise<Array<ContentArtifactRecord & { id: string }>>;
+  updateContentArtifact?(
+    artifactId: string,
+    patch: Partial<Pick<ContentArtifactRecord, "status" | "metadata" | "scheduledFor" | "publishedAt">>
+  ): Promise<void>;
 }
 
 export interface OrchestratorOptions {
