@@ -1276,6 +1276,8 @@ export async function listClientContentArtifacts(
 export async function updateContentArtifact(
   artifactId: string,
   patch: {
+    title?: string | null;
+    body?: string;
     status?: ContentArtifact["status"];
     metadata?: Record<string, unknown>;
     scheduledFor?: string | null;
@@ -1290,6 +1292,8 @@ export async function updateContentArtifact(
     }
     const next: ContentArtifact = {
       ...current,
+      title: patch.title ?? current.title,
+      body: patch.body ?? current.body,
       status: patch.status ?? current.status,
       metadata: patch.metadata ?? current.metadata,
       scheduledFor: patch.scheduledFor ?? current.scheduledFor,
@@ -1300,6 +1304,12 @@ export async function updateContentArtifact(
   }
 
   const updatePatch: Record<string, unknown> = {};
+  if (patch.title !== undefined) {
+    updatePatch.title = patch.title;
+  }
+  if (patch.body !== undefined) {
+    updatePatch.body = patch.body;
+  }
   if (patch.status !== undefined) {
     updatePatch.status = patch.status;
   }

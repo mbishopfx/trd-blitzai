@@ -63,6 +63,7 @@ interface GeneratedPostCopy {
 
 interface TrendSignalBundle {
   localTrendSignals: string[];
+  localQuestionIntents: string[];
   searchIntentSignals: string[];
   competitorCitationSignals: string[];
 }
@@ -510,6 +511,29 @@ function parseRelativeWindow(baseDate: Date, window: string, jitterSeed: string)
   return scheduledAt.toISOString();
 }
 
+function buildDefaultGeoDripWindows(input: {
+  count: number;
+  minGapDays: number;
+  maxGapDays: number;
+  seed: string;
+}): string[] {
+  const count = clamp(Math.round(input.count), 1, 30);
+  const minGap = clamp(Math.round(input.minGapDays), 1, 30);
+  const maxGap = clamp(Math.max(minGap, Math.round(input.maxGapDays)), minGap, 30);
+  const span = Math.max(1, maxGap - minGap + 1);
+
+  let dayCursor = minGap;
+  const windows: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    if (index > 0) {
+      const jitter = hashStringToNumber(`${input.seed}:${index}`) % span;
+      dayCursor += minGap + jitter;
+    }
+    windows.push(`+${dayCursor}d`);
+  }
+  return windows;
+}
+
 function buildBurstArchetypePlan(index: number, configured: string[]): BurstArchetypePlan {
   const supported: BurstArchetypePlan["archetype"][] = ["offer", "event", "proof", "did_you_know"];
   const normalized = configured
@@ -553,6 +577,88 @@ function mergeQaPairs(
     }
   }
   return merged;
+}
+
+function normalizeQuestionText(value: string): string {
+  const normalized = normalizeText(value).replace(/[.?!]+$/g, "");
+  if (!normalized) {
+    return "";
+  }
+  return `${normalized}?`;
+}
+
+function isQuestionLike(value: string): boolean {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.includes("?")) {
+    return true;
+  }
+  return /^(how|what|when|where|why|who|can|do|does|is|are|should|could|will|which|whats|how much|how long)\b/.test(
+    normalized
+  );
+}
+
+function hasTechnicalSignal(value: string): boolean {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (/\b\d+(\.\d+)?\b/.test(normalized)) {
+    return true;
+  }
+  if (/\b(hour|hours|day|days|year|years|psi|gpm|kw|volt|amp|warranty|inspection|diagnostic|licensed|dispatch)\b/.test(normalized)) {
+    return true;
+  }
+  if (/\b(rheem|navien|ao smith|a\.o\. smith|bradford white|carrier|trane|mitsubishi)\b/.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function answerIncludesLocalEntity(answer: string, localEntities: string[]): boolean {
+  const normalized = normalizeText(answer).toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return localEntities.some((entity) => {
+    const token = normalizeText(entity).toLowerCase();
+    return token.length >= 3 && normalized.includes(token);
+  });
+}
+
+function enforceGeoQaAnswerRules(input: {
+  answer: string;
+  maxWords: number;
+  localEntities: string[];
+  fallbackLocalEntity: string | null;
+  fallbackTechnicalDetail: string | null;
+}): string {
+  let result = sanitizeDeclarativeCopy(input.answer, 360);
+  if (!result) {
+    result = "Details are provided after a scope review and service compatibility check.";
+  }
+
+  if (!answerIncludesLocalEntity(result, input.localEntities) && input.fallbackLocalEntity) {
+    result = sanitizeDeclarativeCopy(`${result} Service area includes ${input.fallbackLocalEntity}.`, 360);
+  }
+
+  if (!hasTechnicalSignal(result) && input.fallbackTechnicalDetail) {
+    result = sanitizeDeclarativeCopy(`${result} ${input.fallbackTechnicalDetail}`, 360);
+  }
+
+  if (wordCount(result) > input.maxWords) {
+    result = truncateToMaxWords(result, input.maxWords);
+  }
+  return result;
+}
+
+function isLikelyQuestionIntent(value: string): boolean {
+  if (!value) {
+    return false;
+  }
+  return /(\?)|^(how|what|when|where|why|who|can|do|does|is|are|should|could|will)\b/i.test(value.trim());
 }
 
 function sanitizeStorageSegment(value: string): string {
@@ -831,6 +937,7 @@ function buildEeatLongFormPost(input: {
   shortUrl: string;
   pageContext: LandingPageContext;
   localTrendSignals: string[];
+  localQuestionIntents: string[];
   searchIntentSignals: string[];
   competitorCitationSignals: string[];
   qaPair?: { question: string; answer: string } | null;
@@ -856,6 +963,9 @@ function buildEeatLongFormPost(input: {
   const searchIntentLine = input.searchIntentSignals.length
     ? input.searchIntentSignals.slice(0, 4).join("; ")
     : "service availability, local proof, fast response, and clear next steps";
+  const questionIntentLine = input.localQuestionIntents.length
+    ? input.localQuestionIntents.slice(0, 3).join("; ")
+    : "common local buyer questions and urgency patterns";
   const competitorCitationLine = input.competitorCitationSignals.length
     ? input.competitorCitationSignals.slice(0, 3).join(" | ")
     : "nearby competitors are active, so factual differentiation matters";
@@ -875,7 +985,7 @@ function buildEeatLongFormPost(input: {
     "## Trust",
     `Claims in this post are tied to real operations, documented customer interactions, and current availability. Messaging avoids inflated promises and keeps language specific enough for users to validate through direct contact, review history, and current profile metadata. Traffic path tracked via ${ctaTarget}.`,
     "## Structured Snippet",
-    `- Content Archetype: ${input.archetype.label}\n- Trend Signals: ${trendLine}\n- Search Intent: ${searchIntentLine}\n- Reputation Signals: review response workflow active with escalation guardrails`,
+    `- Content Archetype: ${input.archetype.label}\n- Trend Signals: ${trendLine}\n- Search Intent: ${searchIntentLine}\n- Local Question Intents: ${questionIntentLine}\n- Reputation Signals: review response workflow active with escalation guardrails`,
     "## GBP Q&A Alignment",
     qaPromptLine,
     "## Action Summary",
@@ -967,6 +1077,7 @@ function buildPostSummary(input: {
 export class GbpLiveActionExecutor implements ActionExecutor {
   private readonly contextCache = new Map<string, RunContext>();
   private readonly websiteGroundTruthCache = new Map<string, { rawTextDump: string; sourceUrls: string[] }>();
+  private readonly localQuestionIntentCache = new Map<string, string[]>();
   private readonly options: ExecutorOptions;
 
   constructor(
@@ -1650,6 +1761,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     pageContext: LandingPageContext;
     objectives: string[];
     localTrendSignals: string[];
+    localQuestionIntents: string[];
     searchIntentSignals: string[];
     competitorCitationSignals: string[];
     qaPair?: { question: string; answer: string } | null;
@@ -1660,6 +1772,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     const firstParagraph = input.pageContext.firstParagraph ?? "N/A";
     const businessObjectives = input.objectives.length ? input.objectives.join("; ") : "Increase local visibility and conversions";
     const trendLine = input.localTrendSignals.length ? input.localTrendSignals.join("; ") : "seasonal local demand";
+    const questionIntentLine = input.localQuestionIntents.length
+      ? input.localQuestionIntents.slice(0, 8).join("; ")
+      : "local question intents are being monitored";
     const searchIntentLine = input.searchIntentSignals.length ? input.searchIntentSignals.join("; ") : "local service intent";
     const competitorLine = input.competitorCitationSignals.length
       ? input.competitorCitationSignals.join(" | ")
@@ -1685,6 +1800,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       "- title must be <= 110 characters and read like a publishable GBP headline.",
       "- snippet must be <= 1450 characters and ready to publish as GBP post summary.",
       "- Format longForm using readable markdown sections and short paragraphs.",
+      "- Start longForm with a clear H1-style heading relevant to local urgency or local opportunity.",
+      "- Include exactly one compact bullet list with 3 factual bullets.",
       "- Include one compact bullet list under a section named Structured Snippet.",
       "- The snippet must use short factual chunks, not fluffy narrative.",
       "- Keep tone professional, local-expert, and conversational.",
@@ -1706,6 +1823,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       `- First paragraph: ${firstParagraph}`,
       `- Business objectives: ${businessObjectives}`,
       `- Local trend signals: ${trendLine}`,
+      `- Local question intents: ${questionIntentLine}`,
       `- Search intent signals: ${searchIntentLine}`,
       `- Competitor citation signals: ${competitorLine}`,
       `- GBP Q&A seed angle: ${qaPromptLine}`,
@@ -1731,6 +1849,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     pageContext: LandingPageContext;
     objectives: string[];
     localTrendSignals: string[];
+    localQuestionIntents: string[];
     searchIntentSignals: string[];
     competitorCitationSignals: string[];
     qaPair?: { question: string; answer: string } | null;
@@ -1747,6 +1866,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       shortUrl: input.shortUrl,
       pageContext: input.pageContext,
       localTrendSignals: input.localTrendSignals,
+      localQuestionIntents: input.localQuestionIntents,
       searchIntentSignals: input.searchIntentSignals,
       competitorCitationSignals: input.competitorCitationSignals,
       qaPair: input.qaPair,
@@ -1784,6 +1904,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         pageContext: input.pageContext,
         objectives: input.objectives,
         localTrendSignals: input.localTrendSignals,
+        localQuestionIntents: input.localQuestionIntents,
         searchIntentSignals: input.searchIntentSignals,
         competitorCitationSignals: input.competitorCitationSignals,
         qaPair: input.qaPair
@@ -2767,6 +2888,117 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
   }
 
+  private async fetchGoogleSuggestQuestionIntents(query: string): Promise<string[]> {
+    const normalizedQuery = normalizeText(query).toLowerCase();
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    const cacheKey = `suggest:${normalizedQuery}`;
+    const cached = this.localQuestionIntentCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const endpoint = new URL("https://suggestqueries.google.com/complete/search");
+      endpoint.searchParams.set("client", "firefox");
+      endpoint.searchParams.set("hl", "en-US");
+      endpoint.searchParams.set("q", normalizedQuery);
+      const raw = await this.fetchTextWithTimeout(endpoint.toString(), 9000);
+
+      const parsed = JSON.parse(raw) as unknown;
+      let suggestions: string[] = [];
+      if (Array.isArray(parsed) && Array.isArray(parsed[1])) {
+        suggestions = parsed[1].map(String);
+      }
+
+      const normalized = uniqueStrings(
+        suggestions
+          .map((value) => normalizeQuestionText(value))
+          .filter((value) => isLikelyQuestionIntent(value)),
+        20
+      );
+      this.localQuestionIntentCache.set(cacheKey, normalized);
+      return normalized;
+    } catch {
+      this.localQuestionIntentCache.set(cacheKey, []);
+      return [];
+    }
+  }
+
+  private buildLocalEntityHints(input: {
+    snapshot: LocationRichSnapshot;
+    competitors: CompetitorRecord[];
+  }): string[] {
+    const cityState = formatCityState(input.snapshot.storefrontAddress);
+    const county = inferCountyFromAddress(input.snapshot.formattedAddress);
+    const neighborhoods = uniqueStrings(
+      input.competitors
+        .map((competitor) => (competitor.formattedAddress ? extractNeighborhoodHintFromAddress(competitor.formattedAddress) : null))
+        .filter((value): value is string => Boolean(value)),
+      4
+    );
+
+    return uniqueStrings([cityState, county, ...neighborhoods], 8);
+  }
+
+  private async buildLocalQuestionIntentSignals(input: {
+    location: ResolvedLocation;
+    snapshot: LocationRichSnapshot;
+    pageContext: LandingPageContext;
+    sitemapUrls: string[];
+    objectives: string[];
+    competitors: CompetitorRecord[];
+  }): Promise<string[]> {
+    const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "local area";
+    const seedTerms = uniqueStrings(
+      [
+        ...input.snapshot.serviceLabels,
+        ...input.snapshot.categories,
+        input.pageContext.h1,
+        input.pageContext.pageTitle,
+        ...input.objectives,
+        ...input.sitemapUrls.slice(0, 4).map((url) => summarizeUrlPath(url))
+      ],
+      8
+    );
+    const localEntities = this.buildLocalEntityHints({
+      snapshot: input.snapshot,
+      competitors: input.competitors
+    });
+    const questionQueries = uniqueStrings(
+      seedTerms.flatMap((seed) => [
+        `${seed} ${cityState}`,
+        `how much does ${seed} cost in ${cityState}`,
+        `who offers ${seed} in ${cityState}`
+      ]),
+      12
+    );
+
+    const collected: string[] = [];
+    for (const query of questionQueries) {
+      const questions = await this.fetchGoogleSuggestQuestionIntents(query);
+      collected.push(...questions);
+    }
+
+    const deterministicFallback = uniqueStrings(
+      [
+        ...seedTerms.slice(0, 6).map((seed) => normalizeQuestionText(`How quickly can I book ${seed} in ${cityState}`)),
+        ...seedTerms.slice(0, 6).map((seed) => normalizeQuestionText(`What does ${seed} include in ${cityState}`)),
+        ...seedTerms
+          .slice(0, 4)
+          .map((seed) => normalizeQuestionText(`Who handles emergency ${seed} near ${localEntities[0] ?? cityState}`))
+      ],
+      20
+    );
+
+    return uniqueStrings(
+      [...collected, ...deterministicFallback].map((value) => normalizeQuestionText(value)).filter((value) => isQuestionLike(value)),
+      24
+    );
+  }
+
   private buildSearchIntentSignals(input: {
     location: ResolvedLocation;
     snapshot: LocationRichSnapshot;
@@ -2808,6 +3040,14 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     competitors: CompetitorRecord[];
   }): Promise<TrendSignalBundle> {
     const trendTitles = await this.fetchDailyTrendTitles();
+    const localQuestionIntents = await this.buildLocalQuestionIntentSignals({
+      location: input.location,
+      snapshot: input.snapshot,
+      pageContext: input.pageContext,
+      sitemapUrls: input.sitemapUrls,
+      objectives: input.objectives,
+      competitors: input.competitors
+    });
     const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "local market";
     const keywordPool = keywordTokens([
       ...input.objectives,
@@ -2830,6 +3070,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
 
     return {
       localTrendSignals,
+      localQuestionIntents,
       searchIntentSignals: this.buildSearchIntentSignals({
         location: input.location,
         snapshot: input.snapshot,
@@ -2841,12 +3082,297 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     };
   }
 
+  private configuredGeoFactBank(settings: ClientOrchestrationSettingsRecord): string[] {
+    const geoContent = asRecord(asRecord(settings.metadata).geoContent);
+    return uniqueStrings(
+      [
+        ...toStringArray(geoContent.factBank),
+        ...toStringArray(geoContent.pricingFacts),
+        ...toStringArray(geoContent.warrantyFacts),
+        ...toStringArray(geoContent.slaFacts),
+        ...toStringArray(geoContent.serviceFacts)
+      ],
+      30
+    );
+  }
+
+  private extractGroundTruthFacts(input: {
+    pageContext: LandingPageContext;
+    rawTextDump: string;
+    configuredFacts: string[];
+  }): string[] {
+    const sentenceFacts = input.rawTextDump
+      .split(/(?<=[.!?])\s+/)
+      .map((entry) => sanitizeDeclarativeCopy(entry, 240))
+      .filter((entry) => entry.length >= 35)
+      .filter((entry) => hasTechnicalSignal(entry))
+      .slice(0, 18);
+
+    return uniqueStrings(
+      [
+        ...input.configuredFacts,
+        input.pageContext.pageTitle,
+        input.pageContext.h1,
+        input.pageContext.metaDescription,
+        input.pageContext.firstParagraph,
+        ...sentenceFacts
+      ],
+      30
+    );
+  }
+
+  private buildFallbackGeoQaPairs(input: {
+    locationTitle: string;
+    localQuestionIntents: string[];
+    localEntities: string[];
+    technicalFact: string;
+    limit: number;
+  }): Array<{ question: string; answer: string }> {
+    const fallbackLocalEntity = input.localEntities.slice(0, 2).join(" and ") || "the local area";
+    const questionPool = uniqueStrings(
+      [
+        ...input.localQuestionIntents,
+        normalizeQuestionText(`How quickly can ${input.locationTitle} dispatch service in ${fallbackLocalEntity}`),
+        normalizeQuestionText(`What does same-day service include from ${input.locationTitle}`),
+        normalizeQuestionText(`Do you service emergency requests near ${fallbackLocalEntity}`)
+      ],
+      Math.max(12, input.limit)
+    );
+
+    const pairs = questionPool
+      .map((question) => ({
+        question: normalizeQuestionText(question),
+        answer: enforceGeoQaAnswerRules({
+          answer: `${input.locationTitle} handles this request in ${fallbackLocalEntity}. ${input.technicalFact}`,
+          maxWords: 50,
+          localEntities: input.localEntities,
+          fallbackLocalEntity,
+          fallbackTechnicalDetail: input.technicalFact
+        })
+      }))
+      .filter((pair) => pair.question && pair.answer);
+
+    return pairs.slice(0, input.limit);
+  }
+
+  private buildGeoQaPrompt(input: {
+    locationTitle: string;
+    cityState: string;
+    localEntities: string[];
+    localQuestionIntents: string[];
+    truthFacts: string[];
+    limit: number;
+  }): string {
+    const localEntitiesLine = input.localEntities.length ? input.localEntities.join("; ") : input.cityState;
+    const intentLine = input.localQuestionIntents.length
+      ? input.localQuestionIntents.slice(0, 20).join("\n- ")
+      : "No live questions captured. Generate practical local customer questions.";
+    const truthLine = input.truthFacts.length ? input.truthFacts.slice(0, 28).join("\n- ") : "No explicit facts supplied.";
+
+    return [
+      "SYSTEM ROLE:",
+      "You are a local GEO content architect optimizing Q&A for Google Business Profile retrieval in 2026.",
+      "Return direct, factual Q&A entries for local search users.",
+      "",
+      "DIRECTIVES:",
+      "- Use ONLY supplied ground-truth facts. Do not invent pricing, warranties, SLAs, or guarantees.",
+      "- Answers must be <= 50 words.",
+      "- Declarative tone, no hype.",
+      "- Include at least two local entities in each answer.",
+      "- Include one technical detail in each answer (equipment, process, timing, material, or measurable detail).",
+      "",
+      "OUTPUT FORMAT (JSON only):",
+      "{",
+      '  "qaPairs": [',
+      '    {"question":"string","answer":"string","localEntities":["string"],"technicalDetail":"string","sourceFacts":["string"]}',
+      "  ]",
+      "}",
+      "",
+      `Generate ${input.limit} Q&A pairs.`,
+      `Business: ${input.locationTitle}`,
+      `Primary location: ${input.cityState}`,
+      "Local entities:",
+      `- ${localEntitiesLine}`,
+      "Live local question intent inputs:",
+      `- ${intentLine}`,
+      "Ground truth facts:",
+      `- ${truthLine}`,
+      "",
+      "Return JSON only."
+    ].join("\n");
+  }
+
+  private async generateGeoQaSeedPack(input: {
+    location: ResolvedLocation;
+    snapshot: LocationRichSnapshot;
+    settings: ClientOrchestrationSettingsRecord;
+    pageContext: LandingPageContext;
+    sitemapUrls: string[];
+    trendSignals: TrendSignalBundle;
+    competitors: CompetitorRecord[];
+    limit: number;
+  }): Promise<{
+    qaPairs: Array<{ question: string; answer: string }>;
+    provider: "gemini" | "template";
+    model: string | null;
+    warning?: string;
+    localEntities: string[];
+    truthFacts: string[];
+  }> {
+    const locationTitle = input.location.title ?? input.snapshot.title ?? "Business";
+    const cityState = formatCityState(input.snapshot.storefrontAddress) ?? "local market";
+    const localEntities = this.buildLocalEntityHints({
+      snapshot: input.snapshot,
+      competitors: input.competitors
+    });
+    const configuredFacts = this.configuredGeoFactBank(input.settings);
+    const websiteUri =
+      normalizeHttpUrl(input.snapshot.websiteUri) ??
+      normalizeHttpUrl(input.location.websiteUri) ??
+      normalizeHttpUrl(input.settings.defaultPostUrl);
+    const groundTruth = await this.loadWebsiteGroundTruth({
+      websiteUri,
+      sitemapUrls: input.sitemapUrls
+    });
+    const truthFacts = this.extractGroundTruthFacts({
+      pageContext: input.pageContext,
+      rawTextDump: groundTruth.rawTextDump,
+      configuredFacts
+    });
+    const technicalFact =
+      truthFacts.find((fact) => hasTechnicalSignal(fact)) ??
+      "Each request includes scope verification, compatibility checks, and current scheduling confirmation.";
+    const fallbackPairs = this.buildFallbackGeoQaPairs({
+      locationTitle,
+      localQuestionIntents: input.trendSignals.localQuestionIntents,
+      localEntities,
+      technicalFact,
+      limit: input.limit
+    });
+
+    const apiKey =
+      process.env.GEMINI_API_KEY?.trim() ??
+      process.env.GOOGLE_AI_STUDIO_API_KEY?.trim() ??
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ??
+      process.env.GOOGLE_API_KEY?.trim() ??
+      null;
+    const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_SEMANTIC_MODEL;
+    if (!apiKey) {
+      return {
+        qaPairs: fallbackPairs,
+        provider: "template",
+        model: null,
+        warning: "Gemini API key not configured; GEO Q&A pack generated from deterministic template.",
+        localEntities,
+        truthFacts
+      };
+    }
+
+    try {
+      const prompt = this.buildGeoQaPrompt({
+        locationTitle,
+        cityState,
+        localEntities,
+        localQuestionIntents: input.trendSignals.localQuestionIntents,
+        truthFacts,
+        limit: input.limit
+      });
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.25,
+              topP: 0.85,
+              maxOutputTokens: 2200,
+              responseMimeType: "application/json"
+            }
+          })
+        }
+      );
+      if (!response.ok) {
+        const details = await response.text().catch(() => "");
+        return {
+          qaPairs: fallbackPairs,
+          provider: "template",
+          model,
+          warning: `Gemini GEO Q&A API returned ${response.status}; fallback applied. ${details.slice(0, 180)}`,
+          localEntities,
+          truthFacts
+        };
+      }
+
+      const payload = (await response.json()) as {
+        candidates?: Array<{
+          content?: {
+            parts?: Array<{ text?: string }>;
+          };
+        }>;
+      };
+      const rawText = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("\n") ?? "";
+      const parsed = parseJsonObjectFromText(rawText);
+      const qaRaw = parsed && Array.isArray(parsed.qaPairs) ? parsed.qaPairs : [];
+      const fallbackLocalEntity = localEntities.slice(0, 2).join(" and ") || cityState;
+      const normalizedPairs = qaRaw
+        .map((entry) => {
+          const record = asRecord(entry);
+          const questionRaw = typeof record.question === "string" ? record.question : "";
+          const answerRaw = typeof record.answer === "string" ? record.answer : "";
+          const question = normalizeQuestionText(questionRaw);
+          if (!question || !isQuestionLike(question) || !answerRaw.trim()) {
+            return null;
+          }
+
+          const technicalDetail = typeof record.technicalDetail === "string" ? sanitizeDeclarativeCopy(record.technicalDetail, 180) : "";
+          const fallbackTechnicalDetail = technicalDetail || technicalFact;
+          const answer = enforceGeoQaAnswerRules({
+            answer: answerRaw,
+            maxWords: 50,
+            localEntities,
+            fallbackLocalEntity,
+            fallbackTechnicalDetail
+          });
+          if (!answer) {
+            return null;
+          }
+          return {
+            question,
+            answer
+          };
+        })
+        .filter((entry): entry is { question: string; answer: string } => Boolean(entry));
+
+      const qaPairs = mergeQaPairs(normalizedPairs, fallbackPairs, input.limit);
+      return {
+        qaPairs,
+        provider: "gemini",
+        model,
+        localEntities,
+        truthFacts
+      };
+    } catch (error) {
+      return {
+        qaPairs: fallbackPairs,
+        provider: "template",
+        model,
+        warning: error instanceof Error ? error.message : String(error),
+        localEntities,
+        truthFacts
+      };
+    }
+  }
+
   private buildQaSeedArtifactBody(input: {
     locationTitle: string;
     cityState: string | null;
     qaPairs: Array<{ question: string; answer: string }>;
   }): string {
-    const header = `# GBP Q&A Seed Pack\n\nBusiness: ${input.locationTitle}\nLocal area: ${input.cityState ?? "local market"}\n\nManual seeding pack for GBP Q&A because the provider API does not support direct automated Q&A posting.\n`;
+    const header = `# GBP Q&A Seed Pack\n\nBusiness: ${input.locationTitle}\nLocal area: ${input.cityState ?? "local market"}\n\nManual seeding pack for GBP Q&A because Google Business Profile discontinued the Q&A API on November 3, 2025. Review, edit, and seed manually in GBP.\n`;
     const qaBody = input.qaPairs
       .map((pair, index) => `## Q${index + 1}\nQuestion: ${pair.question}\nAnswer: ${pair.answer}`)
       .join("\n\n");
@@ -5377,6 +5903,28 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     const configuredArchetypes = toStringArray(input.action.payload.archetypes);
     const minQaPairs = clamp(toNumber(input.action.payload.minQaPairs, 20), 20, 30);
     const maxQaPairs = clamp(toNumber(input.action.payload.maxQaPairs, 24), minQaPairs, 30);
+    const geoContentMetadata = asRecord(asRecord(input.context.settings.metadata).geoContent);
+    const qnaTarget = clamp(
+      toNumber(input.action.payload.qnaTarget, toNumber(geoContentMetadata.qnaTarget, maxQaPairs)),
+      minQaPairs,
+      maxQaPairs
+    );
+    const requireOperatorApproval =
+      input.objective !== "publish_scheduled_artifact" && geoContentMetadata.requireOperatorApproval !== false;
+    const dripMinDays = clamp(toNumber(input.action.payload.dripMinDays, toNumber(geoContentMetadata.dripMinDays, 3)), 1, 14);
+    const dripMaxDays = clamp(
+      toNumber(input.action.payload.dripMaxDays, toNumber(geoContentMetadata.dripMaxDays, 4)),
+      dripMinDays,
+      21
+    );
+    const followUpCount = clamp(
+      toNumber(
+        input.action.payload.followUpCount,
+        toNumber(geoContentMetadata.followUpCount, Math.max(6, input.context.settings.postFrequencyPerWeek * 3))
+      ),
+      1,
+      30
+    );
     const ctaUrlFromPayload = normalizeHttpUrl(
       typeof input.action.payload.ctaUrl === "string" ? input.action.payload.ctaUrl : null
     );
@@ -5481,6 +6029,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
 
     const publishedPosts: Array<Record<string, unknown>> = [];
+    const queuedForApproval: Array<Record<string, unknown>> = [];
     const failed: Array<Record<string, unknown>> = [];
     const generatedLongFormDrafts: Array<Record<string, unknown>> = [];
     const executionWarnings: string[] = [];
@@ -5516,18 +6065,6 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         snapshot,
         objectives: input.context.settings.objectives
       });
-      const suggestionsRaw = await this.generateLocationSemanticSuggestions({
-        location,
-        snapshot,
-        competitors,
-        objectives: input.context.settings.objectives,
-        settings: input.context.settings,
-        sitemapUrls
-      });
-      const suggestions: LocationSemanticSuggestions = {
-        ...suggestionsRaw,
-        qaPairs: mergeQaPairs(suggestionsRaw.qaPairs, fallbackSuggestions.qaPairs, maxQaPairs)
-      };
       const signalBundle = await this.buildTrendSignalBundle({
         location,
         snapshot,
@@ -5536,9 +6073,35 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         objectives: input.context.settings.objectives,
         competitors
       });
+      const suggestionsRaw = await this.generateLocationSemanticSuggestions({
+        location,
+        snapshot,
+        competitors,
+        objectives: input.context.settings.objectives,
+        settings: input.context.settings,
+        sitemapUrls
+      });
+      const completenessQaPairs = mergeQaPairs(suggestionsRaw.qaPairs, fallbackSuggestions.qaPairs, maxQaPairs);
+      const geoQaPack = await this.generateGeoQaSeedPack({
+        location,
+        snapshot,
+        settings: input.context.settings,
+        pageContext,
+        sitemapUrls,
+        trendSignals: signalBundle,
+        competitors,
+        limit: qnaTarget
+      });
+      const suggestions: LocationSemanticSuggestions = {
+        ...suggestionsRaw,
+        qaPairs: mergeQaPairs(geoQaPack.qaPairs, completenessQaPairs, maxQaPairs)
+      };
 
       if (suggestions.warning) {
         executionWarnings.push(`${location.locationName}: ${suggestions.warning}`);
+      }
+      if (geoQaPack.warning) {
+        executionWarnings.push(`${location.locationName}: ${geoQaPack.warning}`);
       }
 
       contentBundles.set(location.locationName, {
@@ -5549,7 +6112,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         signalBundle
       });
 
-      const qaSeedPack = suggestions.qaPairs.slice(0, maxQaPairs);
+      const qaSeedPack = suggestions.qaPairs.slice(0, qnaTarget);
       if (input.objective !== "schedule_follow_up_posts" && qaSeedPack.length >= minQaPairs) {
         await this.deps.repository.createContentArtifact({
           organizationId: input.action.organizationId ?? input.context.connection.organizationId,
@@ -5567,8 +6130,14 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             locationName: location.locationName,
             locationId: location.locationId,
             qaPairs: qaSeedPack,
-            qaApiStatus: "manual_seed_required",
-            providerConstraint: "GBP API does not support direct Q&A writes"
+            qaApiStatus: "discontinued_manual_seed_required",
+            providerConstraint: "Google Business Profile Q&A API was discontinued on November 3, 2025.",
+            operatorWorkflowStatus: requireOperatorApproval ? "pending_approval" : "ready_for_review",
+            localQuestionIntents: signalBundle.localQuestionIntents,
+            truthFacts: geoQaPack.truthFacts,
+            localEntities: geoQaPack.localEntities,
+            generationProvider: geoQaPack.provider,
+            generationModel: geoQaPack.model
           },
           status: "draft"
         });
@@ -5576,10 +6145,15 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
 
     if (input.objective === "schedule_follow_up_posts") {
-      const cadence = Math.max(0, input.context.settings.postFrequencyPerWeek);
-      const windows = cadence > 0
-        ? Array.from({ length: cadence }, (_value, index) => `+${index + 1}d`)
-        : toStringArray(input.action.payload.windows);
+      const explicitWindows = toStringArray(input.action.payload.windows);
+      const windows = explicitWindows.length
+        ? explicitWindows
+        : buildDefaultGeoDripWindows({
+            count: followUpCount,
+            minGapDays: dripMinDays,
+            maxGapDays: dripMaxDays,
+            seed: `${input.action.id}:geo-drip`
+          });
       const scheduledArtifacts: Array<Record<string, unknown>> = [];
 
       for (let index = 0; index < windows.length; index += 1) {
@@ -5618,6 +6192,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           pageContext,
           objectives: input.context.settings.objectives,
           localTrendSignals: bundle.signalBundle.localTrendSignals,
+          localQuestionIntents: bundle.signalBundle.localQuestionIntents,
           searchIntentSignals: bundle.signalBundle.searchIntentSignals,
           competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
           qaPair,
@@ -5640,12 +6215,15 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             shortUrl: tinyUrlResult.tinyUrl,
             archetype: archetype.archetype,
             trendSignals: bundle.signalBundle.localTrendSignals,
+            localQuestionIntents: bundle.signalBundle.localQuestionIntents,
             searchIntentSignals: bundle.signalBundle.searchIntentSignals,
             competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
-            qaPair
+            qaPair,
+            operatorWorkflowStatus: requireOperatorApproval ? "pending_approval" : "scheduled",
+            recommendedScheduledFor: scheduledFor
           },
-          status: "scheduled",
-          scheduledFor
+          status: requireOperatorApproval ? "draft" : "scheduled",
+          scheduledFor: requireOperatorApproval ? null : scheduledFor
         });
         scheduledArtifacts.push({
           locationName: bundle.location.locationName,
@@ -5659,11 +6237,16 @@ export class GbpLiveActionExecutor implements ActionExecutor {
 
       return {
         objective: input.objective,
-        status: "scheduled_artifacts_created",
+        status: requireOperatorApproval ? "approval_required" : "scheduled_artifacts_created",
         windows,
-        scheduledArtifactsCreated: scheduledArtifacts.length,
+        scheduledArtifactsCreated: requireOperatorApproval ? 0 : scheduledArtifacts.length,
+        draftArtifactsCreated: requireOperatorApproval ? scheduledArtifacts.length : 0,
         scheduledArtifacts,
         postFrequencyPerWeek: input.context.settings.postFrequencyPerWeek,
+        dripCadenceDays: {
+          min: dripMinDays,
+          max: dripMaxDays
+        },
         locationCount: input.context.locations.length
       };
     }
@@ -5732,6 +6315,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         pageContext,
         objectives: input.context.settings.objectives,
         localTrendSignals: bundle.signalBundle.localTrendSignals,
+        localQuestionIntents: bundle.signalBundle.localQuestionIntents,
         searchIntentSignals: bundle.signalBundle.searchIntentSignals,
         competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
         qaPair,
@@ -5749,6 +6333,77 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             ordinal: index + 1,
             payload: input.action.payload
           });
+
+      if (requireOperatorApproval) {
+        const draftScheduledFor = parseRelativeWindow(new Date(), `+${dripMinDays}d`, `${bundle.location.locationId}:${index}:approval`);
+        await this.deps.repository.createContentArtifact({
+          organizationId: input.action.organizationId ?? input.context.connection.organizationId,
+          clientId: input.action.clientId ?? input.context.connection.clientId,
+          runId: input.action.runId,
+          phase: "content",
+          channel: "gbp",
+          title: generatedCopy.title,
+          body: generatedCopy.longForm,
+          metadata: {
+            snippet: summary,
+            archetype: archetype.archetype,
+            locationName: bundle.location.locationName,
+            locationId: bundle.location.locationId,
+            sourceLandingUrl: landing.landingUrl,
+            shortUrl: tinyUrlResult.tinyUrl,
+            ctaUrl,
+            pageContext,
+            trendSignals: bundle.signalBundle.localTrendSignals,
+            localQuestionIntents: bundle.signalBundle.localQuestionIntents,
+            searchIntentSignals: bundle.signalBundle.searchIntentSignals,
+            competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
+            qaPair,
+            mediaAssetId: selectedAsset?.id ?? null,
+            mediaProcessedStoragePath: processedStoragePath,
+            operatorWorkflowStatus: "pending_approval",
+            recommendedScheduledFor: draftScheduledFor,
+            dispatchActionType: "post_publish",
+            dispatchRiskTier: "medium"
+          },
+          status: "draft"
+        });
+
+        generatedLongFormDrafts.push({
+          title: generatedCopy.title,
+          archetype: archetype.archetype,
+          locationName: bundle.location.locationName,
+          locationId: bundle.location.locationId,
+          mediaAssetId: selectedAsset?.id ?? null,
+          mediaProcessedStoragePath: processedStoragePath,
+          mediaGenerationError,
+          ctaUrl,
+          sourceLandingUrl: landing.landingUrl,
+          tinyUrl: tinyUrlResult.tinyUrl,
+          urlSource: landing.source,
+          contentProvider: generatedCopy.provider,
+          contentModel: generatedCopy.model,
+          contentWarning: generatedCopy.warning ?? null,
+          trendSignals: bundle.signalBundle.localTrendSignals,
+          localQuestionIntents: bundle.signalBundle.localQuestionIntents,
+          searchIntentSignals: bundle.signalBundle.searchIntentSignals,
+          competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
+          qaPair,
+          pageContext,
+          wordCount: wordCount(generatedCopy.longForm),
+          longForm: generatedCopy.longForm
+        });
+
+        queuedForApproval.push({
+          locationName: bundle.location.locationName,
+          locationId: bundle.location.locationId,
+          title: generatedCopy.title,
+          archetype: archetype.archetype,
+          sourceLandingUrl: landing.landingUrl,
+          tinyUrl: tinyUrlResult.tinyUrl,
+          recommendedScheduledFor: draftScheduledFor
+        });
+        continue;
+      }
 
       try {
         const response = await input.context.client.publishLocalPost(bundle.location.accountId, bundle.location.locationId, {
@@ -5775,6 +6430,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             ctaUrl,
             pageContext,
             trendSignals: bundle.signalBundle.localTrendSignals,
+            localQuestionIntents: bundle.signalBundle.localQuestionIntents,
             searchIntentSignals: bundle.signalBundle.searchIntentSignals,
             competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
             qaPair,
@@ -5800,6 +6456,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           contentModel: generatedCopy.model,
           contentWarning: generatedCopy.warning ?? null,
           trendSignals: bundle.signalBundle.localTrendSignals,
+          localQuestionIntents: bundle.signalBundle.localQuestionIntents,
           searchIntentSignals: bundle.signalBundle.searchIntentSignals,
           competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
           qaPair,
@@ -5835,6 +6492,42 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
     }
 
+    if (requireOperatorApproval) {
+      if (!queuedForApproval.length) {
+        throw new Error(`Post draft generation failed for all attempts: ${failed[0]?.error ?? "unknown error"}`);
+      }
+      return {
+        objective: input.objective,
+        status: "approval_required",
+        postCountRequested: postCount,
+        draftArtifactsCreated: queuedForApproval.length,
+        postFrequencyPerWeek: input.context.settings.postFrequencyPerWeek,
+        eeatStructuredSnippetEnabled: input.context.settings.eeatStructuredSnippetEnabled,
+        qaSeedTarget: {
+          min: minQaPairs,
+          max: qnaTarget
+        },
+        postWordRange: {
+          min: input.context.settings.postWordCountMin,
+          max: input.context.settings.postWordCountMax
+        },
+        sitemapUrl: input.context.settings.sitemapUrl,
+        sitemapUrlsDiscovered: sitemapUrls.length,
+        contentSignalsByLocation: [...contentBundles.values()].map((bundle) => ({
+          locationName: bundle.location.locationName,
+          trendSignals: bundle.signalBundle.localTrendSignals,
+          localQuestionIntents: bundle.signalBundle.localQuestionIntents,
+          searchIntentSignals: bundle.signalBundle.searchIntentSignals,
+          competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
+          qaPairsGenerated: bundle.suggestions.qaPairs.length
+        })),
+        warnings: executionWarnings,
+        queuedForApproval,
+        generatedLongFormDrafts,
+        failedPublishes: failed
+      };
+    }
+
     if (!publishedPosts.length) {
       throw new Error(`Post publish failed for all attempts: ${failed[0]?.error ?? "unknown error"}`);
     }
@@ -5858,6 +6551,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       contentSignalsByLocation: [...contentBundles.values()].map((bundle) => ({
         locationName: bundle.location.locationName,
         trendSignals: bundle.signalBundle.localTrendSignals,
+        localQuestionIntents: bundle.signalBundle.localQuestionIntents,
         searchIntentSignals: bundle.signalBundle.searchIntentSignals,
         competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
         qaPairsGenerated: bundle.suggestions.qaPairs.length

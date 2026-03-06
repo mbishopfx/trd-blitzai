@@ -11,6 +11,7 @@ interface ClientTabsProps {
 const tabs = [
   { key: "overview", label: "Overview", href: (id: string) => `/dashboard/clients/${id}` },
   { key: "blitz", label: "Blitz Worker", href: (id: string) => `/dashboard/clients/${id}/blitz` },
+  { key: "content", label: "Content Ops", href: (id: string) => `/dashboard/clients/${id}/content` },
   { key: "qna", label: "Q&A Ops", href: (id: string) => `/dashboard/clients/${id}/qna` },
   { key: "actions-needed", label: "Actions Needed", href: (id: string) => `/dashboard/clients/${id}/actions-needed` },
   { key: "reviews", label: "Reviews", href: (id: string) => `/dashboard/clients/${id}/reviews` },

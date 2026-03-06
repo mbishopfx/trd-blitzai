@@ -92,6 +92,18 @@ export function startScheduledContentDispatcher(input: {
           scheduledFor: minutesFromNow(10)
         });
 
+        const artifactMetadata = asRecord(artifact.metadata);
+        if (artifact.channel === "gbp_qna_seed" && typeof artifactMetadata.dispatchActionType !== "string") {
+          await input.repository.updateContentArtifact!(artifact.id, {
+            status: "failed",
+            metadata: {
+              ...claimedMetadata,
+              lastDispatchError: "Q&A seed artifacts require manual workflow and cannot be auto-dispatched."
+            }
+          });
+          continue;
+        }
+
         const run: BlitzRun = {
           id: `scheduled-artifact-${artifact.id}`,
           organizationId: artifact.organizationId,
@@ -108,7 +120,6 @@ export function startScheduledContentDispatcher(input: {
           summary: null
         };
 
-        const artifactMetadata = asRecord(artifact.metadata);
         const dispatchActionType = resolveDispatchActionType(artifactMetadata.dispatchActionType);
         const dispatchPayload = asRecord(artifactMetadata.actionPayload);
         const actionPayload =

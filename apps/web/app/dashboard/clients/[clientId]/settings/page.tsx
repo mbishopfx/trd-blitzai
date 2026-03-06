@@ -88,6 +88,13 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(String).map((entry) => entry.trim()).filter(Boolean);
+}
+
 function toInt(value: number, fallback: number, min: number, max: number): number {
   if (!Number.isFinite(value)) {
     return fallback;
@@ -111,6 +118,12 @@ export default function ClientOrchestrationSettingsPage() {
   const [postWordCountMin, setPostWordCountMin] = useState(500);
   const [postWordCountMax, setPostWordCountMax] = useState(800);
   const [eeatStructuredSnippetEnabled, setEeatStructuredSnippetEnabled] = useState(true);
+  const [geoRequireOperatorApproval, setGeoRequireOperatorApproval] = useState(true);
+  const [geoDripMinDays, setGeoDripMinDays] = useState(3);
+  const [geoDripMaxDays, setGeoDripMaxDays] = useState(4);
+  const [geoFollowUpCount, setGeoFollowUpCount] = useState(8);
+  const [geoQaTarget, setGeoQaTarget] = useState(24);
+  const [geoFactBankText, setGeoFactBankText] = useState("");
   const [mediaFloodTargetAssets, setMediaFloodTargetAssets] = useState(50);
   const [mediaFloodBatchSize, setMediaFloodBatchSize] = useState(12);
   const [mediaFloodCooldownMs, setMediaFloodCooldownMs] = useState(350);
@@ -164,6 +177,13 @@ export default function ClientOrchestrationSettingsPage() {
         setPostWordCountMin(settings.postWordCountMin);
         setPostWordCountMax(settings.postWordCountMax);
         setEeatStructuredSnippetEnabled(settings.eeatStructuredSnippetEnabled);
+        const geoContent = asRecord(asRecord(settings.metadata).geoContent);
+        setGeoRequireOperatorApproval(geoContent.requireOperatorApproval !== false);
+        setGeoDripMinDays(toInt(Number(geoContent.dripMinDays), 3, 1, 14));
+        setGeoDripMaxDays(toInt(Number(geoContent.dripMaxDays), 4, 1, 21));
+        setGeoFollowUpCount(toInt(Number(geoContent.followUpCount), 8, 1, 30));
+        setGeoQaTarget(toInt(Number(geoContent.qnaTarget), 24, 20, 30));
+        setGeoFactBankText(toLines(toStringArray(geoContent.factBank)));
         const mediaFlood = asRecord(asRecord(settings.metadata).mediaFlood);
         setMediaFloodTargetAssets(toInt(Number(mediaFlood.targetAssets), 50, 5, 150));
         setMediaFloodBatchSize(toInt(Number(mediaFlood.batchSize), 12, 1, 30));
@@ -234,6 +254,11 @@ export default function ClientOrchestrationSettingsPage() {
       setBusy(false);
       return;
     }
+    if (geoDripMinDays > geoDripMaxDays) {
+      setError("GEO drip minimum days cannot exceed maximum days.");
+      setBusy(false);
+      return;
+    }
 
     try {
       await request<{ settings: OrchestrationSettings }>(`/api/v1/clients/${clientId}/orchestration/settings`, {
@@ -252,6 +277,14 @@ export default function ClientOrchestrationSettingsPage() {
           eeatStructuredSnippetEnabled,
           metadata: {
             updatedFrom: "dashboard-client-orchestration",
+            geoContent: {
+              requireOperatorApproval: geoRequireOperatorApproval,
+              dripMinDays: toInt(geoDripMinDays, 3, 1, 14),
+              dripMaxDays: toInt(geoDripMaxDays, 4, 1, 21),
+              followUpCount: toInt(geoFollowUpCount, 8, 1, 30),
+              qnaTarget: toInt(geoQaTarget, 24, 20, 30),
+              factBank: fromLines(geoFactBankText)
+            },
             mediaFlood: {
               targetAssets: toInt(mediaFloodTargetAssets, 50, 5, 150),
               batchSize: toInt(mediaFloodBatchSize, 12, 1, 30),
@@ -527,6 +560,7 @@ export default function ClientOrchestrationSettingsPage() {
           <span className={styles.badge}>Post frequency: {postFrequencyPerWeek}/week</span>
           <span className={styles.badge}>Word range: {postWordCountMin}-{postWordCountMax}</span>
           <span className={styles.badge}>EEAT snippets: {eeatStructuredSnippetEnabled ? "Enabled" : "Disabled"}</span>
+          <span className={styles.badge}>GEO approval gate: {geoRequireOperatorApproval ? "On" : "Off"}</span>
           <span className={styles.badge}>Media flood target: {mediaFloodTargetAssets}</span>
           <span className={styles.badge}>Allowed assets: {mediaAssets.filter((asset) => asset.isAllowedForPosts).length}</span>
         </div>
@@ -631,6 +665,78 @@ export default function ClientOrchestrationSettingsPage() {
               />
             </label>
           </div>
+          <header className={styles.cardHeader} style={{ marginTop: 16 }}>
+            <h3 className={styles.cardTitle}>GEO + Q&A Controls</h3>
+            <p className={styles.cardHint}>Controls approval gating, drip cadence, and truth-constrained Q&A seeding behavior.</p>
+          </header>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Require Operator Approval</span>
+              <select
+                className={styles.select}
+                value={geoRequireOperatorApproval ? "enabled" : "disabled"}
+                onChange={(event) => setGeoRequireOperatorApproval(event.target.value === "enabled")}
+              >
+                <option value="enabled">enabled</option>
+                <option value="disabled">disabled</option>
+              </select>
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Q&A Target</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={20}
+                max={30}
+                value={geoQaTarget}
+                onChange={(event) => setGeoQaTarget(Number(event.target.value))}
+              />
+            </label>
+          </div>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Drip Min Days</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={1}
+                max={14}
+                value={geoDripMinDays}
+                onChange={(event) => setGeoDripMinDays(Number(event.target.value))}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Drip Max Days</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={1}
+                max={21}
+                value={geoDripMaxDays}
+                onChange={(event) => setGeoDripMaxDays(Number(event.target.value))}
+              />
+            </label>
+          </div>
+          <label className={styles.field}>
+            <span className={styles.label}>Follow-up Draft Count</span>
+            <input
+              className={styles.input}
+              type="number"
+              min={1}
+              max={30}
+              value={geoFollowUpCount}
+              onChange={(event) => setGeoFollowUpCount(Number(event.target.value))}
+            />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.label}>Truth Fact Bank (one per line)</span>
+            <textarea
+              className={styles.textarea}
+              value={geoFactBankText}
+              onChange={(event) => setGeoFactBankText(event.target.value)}
+              placeholder={"Same-day dispatch cutoff is 12:00 PM local time.\nLabor warranty is 5 years on qualifying installs.\nRheem and Navien tankless models are supported."}
+            />
+          </label>
           <label className={styles.field}>
             <span className={styles.label}>Sitemap URL</span>
             <input

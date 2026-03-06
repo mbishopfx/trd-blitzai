@@ -36,11 +36,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const body = await request.json().catch(() => null);
   const metadata = asRecord(body?.metadata);
+  const title =
+    typeof body?.title === "string" ? body.title : body?.title === null ? null : undefined;
+  const contentBody = typeof body?.body === "string" ? body.body : undefined;
   const status = typeof body?.status === "string" ? body.status : undefined;
   const publishedAt = typeof body?.publishedAt === "string" ? body.publishedAt : undefined;
   const scheduledFor = typeof body?.scheduledFor === "string" || body?.scheduledFor === null ? body.scheduledFor : undefined;
 
   const updated = await updateContentArtifact(params.artifactId, {
+    title,
+    body: contentBody,
     status: status as "draft" | "scheduled" | "published" | "failed" | undefined,
     metadata: Object.keys(metadata).length ? metadata : undefined,
     publishedAt,
