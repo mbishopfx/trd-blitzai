@@ -81,16 +81,12 @@ function uniqueChannels(input: Array<"sms" | "email">): Array<"sms" | "email"> {
 function buildSmsMessage(input: {
   businessName: string;
   customerFirstName: string;
-  technicianName?: string;
   servicePerformed?: string;
-  city?: string;
   reviewUrl: string;
 }): string {
-  const service = input.servicePerformed?.trim() || "your service";
-  const tech = input.technicianName?.trim() ? ` with ${input.technicianName.trim()}` : "";
-  const city = input.city?.trim() ? ` in ${input.city.trim()}` : "";
-  const draft = `Hi ${input.customerFirstName}, thanks for trusting ${input.businessName}${tech} for ${service}${city}. If we earned it, please leave a quick review: ${input.reviewUrl}`;
-  return draft.slice(0, 500);
+  const service = input.servicePerformed?.trim() || "your recent service";
+  const draft = `Hi ${input.customerFirstName}, quick favor: if we helped with ${service}, please leave us a quick Google review: ${input.reviewUrl} - ${input.businessName}`;
+  return draft.slice(0, 320);
 }
 
 function buildEmailBody(input: {
