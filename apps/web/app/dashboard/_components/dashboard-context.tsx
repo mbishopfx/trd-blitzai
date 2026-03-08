@@ -134,34 +134,56 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const request = useCallback(
     async <T,>(path: string, options?: RequestOptions): Promise<T> => {
-      const headers: Record<string, string> = {
-        Accept: "application/json",
-        "x-user-id": "dashboard-shell",
-        "x-role": role
+      const trimmedApiKey = apiKey.trim();
+      let accessToken = session?.access_token ?? null;
+      if (!accessToken && supabase) {
+        const { data } = await supabase.auth.getSession();
+        accessToken = data.session?.access_token ?? null;
+        if (data.session) {
+          setSession(data.session);
+        }
+      }
+
+      const buildHeaders = (token: string | null): Record<string, string> => {
+        const headers: Record<string, string> = {
+          Accept: "application/json",
+          "x-user-id": "dashboard-shell",
+          "x-role": role
+        };
+        if (selectedOrgId) {
+          headers["x-org-id"] = selectedOrgId;
+        }
+        if (trimmedApiKey) {
+          headers["x-api-key"] = trimmedApiKey;
+        }
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+        if (options?.body !== undefined) {
+          headers["Content-Type"] = "application/json";
+        }
+        return headers;
       };
 
-      if (selectedOrgId) {
-        headers["x-org-id"] = selectedOrgId;
-      }
-      if (apiKey.trim()) {
-        headers["x-api-key"] = apiKey.trim();
-      }
-      if (session?.access_token) {
-        headers.Authorization = `Bearer ${session.access_token}`;
+      const executeFetch = async (token: string | null) =>
+        fetch(path, {
+          method: options?.method ?? "GET",
+          headers: buildHeaders(token),
+          body: options?.body === undefined ? undefined : JSON.stringify(options.body)
+        });
+
+      let response = await executeFetch(accessToken);
+      if (response.status === 401 && supabase && !trimmedApiKey) {
+        const { data } = await supabase.auth.getSession();
+        const refreshedToken = data.session?.access_token ?? null;
+        if (refreshedToken && refreshedToken !== accessToken) {
+          accessToken = refreshedToken;
+          setSession(data.session);
+          response = await executeFetch(refreshedToken);
+        }
       }
 
-      const response = await fetch(path, {
-        method: options?.method ?? "GET",
-        headers: options?.body === undefined ? headers : { ...headers, "Content-Type": "application/json" },
-        body: options?.body === undefined ? undefined : JSON.stringify(options.body)
-      });
-
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            error?: string;
-          }
-        | T
-        | null;
+      const payload = (await response.json().catch(() => null)) as { error?: string } | T | null;
 
       if (!response.ok) {
         const message =
@@ -173,7 +195,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
       return payload as T;
     },
-    [apiKey, role, selectedOrgId, session?.access_token]
+    [apiKey, role, selectedOrgId, session?.access_token, supabase]
   );
 
   const buildAuthHeaders = useCallback(
