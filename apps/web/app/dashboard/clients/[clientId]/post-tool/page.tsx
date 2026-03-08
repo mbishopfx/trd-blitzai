@@ -24,6 +24,15 @@ interface SitemapPayload {
   queuedLandingUrls: string[];
   dueScheduledCount: number;
   scheduledDispatcherExpected: boolean;
+  postToolArtifacts: Array<{
+    id: string;
+    status: "draft" | "scheduled" | "published" | "failed";
+    title: string | null;
+    createdAt: string;
+    scheduledFor: string | null;
+    landingUrl: string | null;
+    mediaAssetId: string | null;
+  }>;
   warnings: string[];
 }
 
@@ -89,6 +98,7 @@ export default function ClientPostToolPage() {
   const [queuedLandingUrls, setQueuedLandingUrls] = useState<string[]>([]);
   const [dueScheduledCount, setDueScheduledCount] = useState(0);
   const [scheduledDispatcherExpected, setScheduledDispatcherExpected] = useState(true);
+  const [persistedArtifacts, setPersistedArtifacts] = useState<SitemapPayload["postToolArtifacts"]>([]);
   const [allowedAssets, setAllowedAssets] = useState<SitemapPayload["allowedAssets"]>([]);
   const [singleUrl, setSingleUrl] = useState("");
   const [spawn3Selection, setSpawn3Selection] = useState<string[]>([]);
@@ -112,6 +122,7 @@ export default function ClientPostToolPage() {
         setQueuedLandingUrls(payload.queuedLandingUrls);
         setDueScheduledCount(payload.dueScheduledCount);
         setScheduledDispatcherExpected(payload.scheduledDispatcherExpected);
+        setPersistedArtifacts(payload.postToolArtifacts);
         setAllowedAssets(payload.allowedAssets);
         setWarnings(payload.warnings);
 
@@ -390,7 +401,57 @@ export default function ClientPostToolPage() {
               {submitPreview.warnings.length ? <pre className={styles.codeBlock}>{submitPreview.warnings.join("\n")}</pre> : null}
             </div>
           ) : (
-            <p className={styles.empty}>No queued post tool run yet.</p>
+            <p className={styles.empty}>No newly queued result in this session.</p>
+          )}
+        </article>
+
+        <article className={`${styles.card} ${styles.col12}`}>
+          <header className={styles.cardHeader}>
+            <h3 className={styles.cardTitle}>Persisted Post Tool Queue</h3>
+          </header>
+          {persistedArtifacts.length ? (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Artifact</th>
+                    <th>Landing URL</th>
+                    <th>Created</th>
+                    <th>Scheduled</th>
+                    <th>Asset</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {persistedArtifacts.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.id}</td>
+                      <td>{item.landingUrl ?? "n/a"}</td>
+                      <td>{formatDate(item.createdAt)}</td>
+                      <td>{item.scheduledFor ? formatDate(item.scheduledFor) : "n/a"}</td>
+                      <td>{item.mediaAssetId ?? "text-only"}</td>
+                      <td>
+                        <div className={styles.inlineActions}>
+                          <span>{item.status}</span>
+                          {item.status === "draft" || item.status === "scheduled" ? (
+                            <button
+                              type="button"
+                              className={styles.buttonGhost}
+                              onClick={() => void pushNow([item.id])}
+                              disabled={busy}
+                            >
+                              Push Now
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className={styles.empty}>No persisted post-tool artifacts yet.</p>
           )}
         </article>
       </section>

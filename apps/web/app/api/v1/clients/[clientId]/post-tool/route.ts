@@ -216,6 +216,27 @@ export async function GET(request: NextRequest, { params }: Params) {
     }
     return new Date(artifact.scheduledFor).getTime() <= Date.now();
   }).length;
+  const postToolArtifacts = existingArtifacts
+    .filter((artifact) => {
+      const metadata = artifact.metadata as Record<string, unknown>;
+      const actionPayload = asRecord(metadata.actionPayload);
+      const source = typeof metadata.source === "string" ? metadata.source : "";
+      const objective = typeof actionPayload.objective === "string" ? actionPayload.objective : "";
+      return source === "isolated_post_tool" || objective === "manual_post_tool_publish";
+    })
+    .map((artifact) => {
+      const metadata = artifact.metadata as Record<string, unknown>;
+      return {
+        id: artifact.id,
+        status: artifact.status,
+        title: artifact.title,
+        createdAt: artifact.createdAt,
+        scheduledFor: artifact.scheduledFor,
+        landingUrl: parseLandingUrlFromArtifactMetadata(metadata),
+        mediaAssetId: typeof metadata.mediaAssetId === "string" ? metadata.mediaAssetId : null
+      };
+    })
+    .slice(0, 120);
 
   return ok({
     modeDefaults: {
@@ -228,6 +249,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     queuedLandingUrls,
     dueScheduledCount,
     scheduledDispatcherExpected: true,
+    postToolArtifacts,
     warnings
   });
 }
