@@ -994,10 +994,42 @@ function mediaUrlFromAsset(asset: ClientMediaAssetRecord): string | null {
   return candidates[0] ?? null;
 }
 
+function cleanTopicCandidate(value: string): string {
+  return normalizeText(value)
+    .replace(/\bhttps?:\/\/\S+/gi, " ")
+    .replace(/\bwww\.\S+/gi, " ")
+    .replace(/\b[a-z0-9][a-z0-9-]*\.(com|net|org|io|co|biz|info|us|nyc)\b/gi, " ")
+    .replace(/\b[a-z]*\d+[a-z]*\b/gi, " ")
+    .replace(/\b(inc|llc|corp|ltd|co|company)\b\.?/gi, " ")
+    .replace(/[|;:]+/g, " ")
+    .replace(/[^\w\s&/-]/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function isLikelyNoisyTopic(value: string): boolean {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized || normalized.length < 10) {
+    return true;
+  }
+  if (/\b(www|http|com|net|org|io|co|biz|info)\b/.test(normalized)) {
+    return true;
+  }
+  if (/\b(offer|trend focus|search intent|learn more)\b/.test(normalized)) {
+    return true;
+  }
+  const alphaCount = (normalized.match(/[a-z]/g) ?? []).length;
+  if (alphaCount < 7) {
+    return true;
+  }
+  return false;
+}
+
 function cleanDisplayText(value: string, fallback: string): string {
   const normalized = normalizeText(value)
     .replace(/\bhttps?:\/\/\S+/gi, " ")
     .replace(/\b[a-z0-9.-]+\.(com|net|org|io|co|biz|info)\b/gi, " ")
+    .replace(/\b[a-z]*\d+[a-z]*\b/gi, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
   return normalized || fallback;
@@ -1014,6 +1046,83 @@ function extractCityFromSignals(signals: string[]): string | null {
   return null;
 }
 
+function resolvePostTopicLabel(input: {
+  landingUrl: string;
+  pageContext: LandingPageContext;
+  searchIntentSignals: string[];
+}): string {
+  const fallback = "Local service update";
+  const candidates = [
+    input.pageContext.h1,
+    input.pageContext.pageTitle,
+    ...input.searchIntentSignals,
+    input.pageContext.metaDescription,
+    input.pageContext.firstParagraph,
+    toSentenceCase(summarizeUrlPath(input.landingUrl))
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+  for (const candidate of candidates) {
+    const firstClause = normalizeText(candidate).split(/[.!?]/)[0] ?? candidate;
+    const cleaned = cleanTopicCandidate(firstClause);
+    if (isLikelyNoisyTopic(cleaned)) {
+      continue;
+    }
+    return truncateChars(toSentenceCase(cleaned), 96);
+  }
+
+  return fallback;
+}
+
+function toHashtagLabel(value: string): string | null {
+  const cleaned = value.replace(/[^a-zA-Z0-9 ]+/g, " ").trim();
+  if (!cleaned) {
+    return null;
+  }
+  const token = cleaned
+    .split(/\s+/)
+    .filter((part) => part.length >= 3 && !/^\d+$/.test(part))
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join("");
+  return token || null;
+}
+
+function buildPostHashtags(input: {
+  topicLabel: string;
+  cityState: string | null;
+}): string {
+  const stopwords = new Set([
+    "local",
+    "service",
+    "services",
+    "your",
+    "with",
+    "from",
+    "near",
+    "that",
+    "this",
+    "offer",
+    "offers",
+    "and",
+    "for",
+    "the"
+  ]);
+  const topicTags = uniqueStrings(
+    input.topicLabel
+      .split(/[^a-zA-Z0-9]+/g)
+      .map((token) => token.trim().toLowerCase())
+      .filter((token) => token.length >= 4 && !stopwords.has(token))
+      .map((token) => toHashtagLabel(token)),
+    2
+  );
+  const cityTag = input.cityState ? toHashtagLabel(input.cityState.split(",")[0] ?? input.cityState) : null;
+  const tags = uniqueStrings(
+    [...topicTags.map((token) => `#${token}`), cityTag ? `#${cityTag}` : null, "#LocalService", "#BookLocal"],
+    5
+  );
+  return tags.join(" ");
+}
+
 function buildStyledGbpSnippet(input: {
   locationTitle: string;
   topicLabel: string;
@@ -1023,25 +1132,26 @@ function buildStyledGbpSnippet(input: {
   addressLine?: string | null;
 }): string {
   const locationTitle = cleanDisplayText(input.locationTitle, "Our team").slice(0, 90);
-  const topicLabel = cleanDisplayText(input.topicLabel, "Furniture Repair and Refinishing").slice(0, 110);
+  const topicLabel = cleanDisplayText(input.topicLabel, "Local service support").slice(0, 110);
   const cityState = extractCityFromSignals(input.localTrendSignals);
   const ctaTarget = input.ctaUrl ?? input.shortUrl;
   const areaLine = cityState ? `${topicLabel} in ${cityState}` : topicLabel;
-  const hashtags = cityState && cityState.toLowerCase().includes("new york")
-    ? "#FurnitureRefinishing #NYCRefinishing #FurnitureRepair #CustomRepairs"
-    : "#FurnitureRefinishing #FurnitureRepair #CustomRepairs #WoodRestoration";
+  const hashtags = buildPostHashtags({
+    topicLabel,
+    cityState
+  });
 
   const lines = [
     `🔧 ${areaLine}? ${locationTitle} is here to help.`,
     "",
-    `At ${locationTitle}, we bring worn or damaged furniture back to life with hands-on repair and refinishing craftsmanship.`,
+    `At ${locationTitle}, we provide practical help with ${topicLabel.toLowerCase()} using a clear process, reliable communication, and execution focused on measurable results.`,
     "",
-    "💰 Cost-effective restoration that helps you avoid full replacement costs.",
-    "🏆 Skilled craftsmanship for repairs, touch-ups, veneer work, and finish correction.",
-    "🛋️ Personalized service based on your style, piece condition, and timeline.",
-    "✅ Durable finish protection designed for daily use in real homes and businesses.",
+    "💰 Cost-conscious planning with transparent scope before work begins.",
+    "🏆 Skilled execution with technical detail and quality control checkpoints.",
+    "📞 Fast response with clear timelines, next steps, and support after delivery.",
+    "✅ Durable outcomes built for repeat use in real homes and businesses.",
     "",
-    "Let’s restore your furniture the right way. Reach out today and see the difference quality refinishing can make.",
+    `Need help with ${topicLabel.toLowerCase()}? Contact ${locationTitle} today and let’s get your project moving.`,
     "",
     hashtags,
     "",
@@ -1078,10 +1188,11 @@ function buildEeatLongFormPost(input: {
   const targetWords = clamp(Math.round((targetMin + targetMax) / 2), targetMin, targetMax);
   const objectiveLabel = readableObjective(input.objective);
   const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-  const topicLabel =
-    input.pageContext.h1 ??
-    input.pageContext.pageTitle ??
-    toSentenceCase(summarizeUrlPath(input.landingUrl));
+  const topicLabel = resolvePostTopicLabel({
+    landingUrl: input.landingUrl,
+    pageContext: input.pageContext,
+    searchIntentSignals: input.searchIntentSignals
+  });
   const metaBlurb =
     input.pageContext.metaDescription ??
     input.pageContext.firstParagraph ??
@@ -2169,9 +2280,11 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
 
       const topicLabel =
-        input.pageContext.h1 ??
-        input.pageContext.pageTitle ??
-        toSentenceCase(summarizeUrlPath(input.landingUrl));
+        resolvePostTopicLabel({
+          landingUrl: input.landingUrl,
+          pageContext: input.pageContext,
+          searchIntentSignals: input.searchIntentSignals
+        });
       const snippet = buildStyledGbpSnippet({
         locationTitle: input.locationTitle,
         topicLabel,
