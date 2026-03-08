@@ -185,6 +185,18 @@ const DEFAULT_OPTIONS: ExecutorOptions = {
   maxReviewRepliesPerAction: 60
 };
 
+const HARDCODED_POSTS_PER_DAY = 2;
+const HARDCODED_POST_DAYS_PER_WEEK = 3;
+const HARDCODED_POSTS_PER_WEEK = HARDCODED_POSTS_PER_DAY * HARDCODED_POST_DAYS_PER_WEEK;
+const HARDCODED_WEEKLY_POST_WINDOWS = [
+  "+1d@14:30",
+  "+1d@19:00",
+  "+3d@14:30",
+  "+3d@19:00",
+  "+5d@14:30",
+  "+5d@19:00"
+] as const;
+
 const BLITZ_COMPLETENESS_PROMPT_VERSION = "blitzforge-completeness-v1";
 const DEFAULT_SEMANTIC_MODEL = "gemini-2.0-flash";
 const BANNED_MARKETING_WORDS = [
@@ -491,8 +503,24 @@ function keywordTokens(values: string[]): string[] {
   );
 }
 
+function buildHardcodedWeeklyPostWindows(): string[] {
+  return [...HARDCODED_WEEKLY_POST_WINDOWS];
+}
+
 function parseRelativeWindow(baseDate: Date, window: string, jitterSeed: string): string {
-  const match = window.trim().match(/^\+(\d+)([dh])$/i);
+  const normalized = window.trim();
+  const dayWithTime = normalized.match(/^\+(\d+)d@(\d{1,2}):(\d{2})$/i);
+  if (dayWithTime) {
+    const dayOffset = Number(dayWithTime[1]);
+    const hour = clamp(Number(dayWithTime[2]), 0, 23);
+    const minute = clamp(Number(dayWithTime[3]), 0, 59);
+    const scheduledAt = new Date(baseDate);
+    scheduledAt.setUTCDate(scheduledAt.getUTCDate() + dayOffset);
+    scheduledAt.setUTCHours(hour, minute, 0, 0);
+    return scheduledAt.toISOString();
+  }
+
+  const match = normalized.match(/^\+(\d+)([dh])$/i);
   const scheduledAt = new Date(baseDate);
   if (!match) {
     return scheduledAt.toISOString();
@@ -532,6 +560,46 @@ function buildDefaultGeoDripWindows(input: {
     windows.push(`+${dayCursor}d`);
   }
   return windows;
+}
+
+function buildPostFingerprint(input: {
+  title: string;
+  snippet: string;
+  longForm: string;
+  landingUrl: string;
+  archetype: string;
+}): string {
+  const normalize = (value: string, maxLength: number): string =>
+    normalizeText(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, maxLength);
+
+  const landingPath = (() => {
+    try {
+      const parsed = new URL(input.landingUrl);
+      return `${parsed.host}${parsed.pathname}`.toLowerCase();
+    } catch {
+      return normalize(input.landingUrl, 120);
+    }
+  })();
+
+  return [
+    normalize(input.title, 140),
+    normalize(input.snippet, 320),
+    normalize(input.longForm, 900),
+    landingPath,
+    normalize(input.archetype, 40)
+  ].join("|");
+}
+
+function uniquePostTitle(title: string, suffix: string): string {
+  const cleanTitle = normalizeText(title) || "Local Update";
+  const cleanSuffix = normalizeText(suffix) || "Fresh Angle";
+  const maxBase = Math.max(20, 110 - cleanSuffix.length - 3);
+  return `${cleanTitle.slice(0, maxBase)} | ${cleanSuffix}`.slice(0, 110);
 }
 
 function buildBurstArchetypePlan(index: number, configured: string[]): BurstArchetypePlan {
@@ -1039,20 +1107,65 @@ function replyForReview(input: {
   locationTitle: string;
   tone: string;
   style: string;
+  serviceName?: string | null;
+  cityName?: string | null;
 }): string {
+  const inferServiceEntity = (comment: string): string | null => {
+    const normalized = normalizeText(comment).toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    const serviceLexicon = [
+      "tankless water heater",
+      "water heater",
+      "sump pump",
+      "drain cleaning",
+      "pipe repair",
+      "roof repair",
+      "hvac repair",
+      "ac repair",
+      "furnace repair",
+      "electrical panel",
+      "window replacement",
+      "bathroom remodel",
+      "kitchen remodel"
+    ];
+    const hit = serviceLexicon.find((token) => normalized.includes(token));
+    return hit ? hit : null;
+  };
+
+  const inferLocality = (locationTitle: string): string => {
+    const compact = normalizeText(locationTitle);
+    if (!compact) {
+      return "your area";
+    }
+    const chunks = compact.split(/[|,-]/).map((entry) => entry.trim()).filter(Boolean);
+    return chunks.length >= 2 ? chunks[chunks.length - 1] : compact;
+  };
+
   const name = input.reviewerName.trim() || "there";
+  const locality = sanitizeEntityLabel(input.cityName ?? inferLocality(input.locationTitle), 80) || "your area";
+  const serviceEntity =
+    sanitizeEntityLabel(input.serviceName ?? inferServiceEntity(input.comment) ?? "your recent service", 90) ||
+    "your recent service";
   const intro = `Hi ${name}, thank you for your feedback.`;
-  const tonePrefix = input.tone.includes("friendly") ? "We appreciate you choosing us." : "";
+  const tonePrefix = input.tone.includes("friendly") ? "We appreciate you choosing our team." : "";
   if (input.starRating >= 4) {
-    return `${intro} ${tonePrefix} We appreciate your ${input.starRating}-star review for ${input.locationTitle}. We look forward to serving you again soon.`.replace(/\s+/g, " ").trim();
+    return `${intro} ${tonePrefix} Our team in ${locality} is glad we could help with ${serviceEntity}. If you need follow-up support, tap Call and we will prioritize your request.`
+      .replace(/\s+/g, " ")
+      .trim();
   }
   if (input.starRating === 3) {
-    return `${intro} ${tonePrefix} We appreciate you choosing ${input.locationTitle} and will use your feedback to keep improving.`.replace(/\s+/g, " ").trim();
+    return `${intro} ${tonePrefix} We appreciate your input about ${serviceEntity} in ${locality}. We are already using this feedback to improve response speed and communication on future jobs.`
+      .replace(/\s+/g, " ")
+      .trim();
   }
   const directEnding = input.style.toLowerCase().includes("direct")
-    ? "Please contact our team today so we can fix this immediately."
-    : "Please contact our team so we can make this right.";
-  return `${intro} We're sorry your experience at ${input.locationTitle} did not meet expectations. ${directEnding}`.replace(/\s+/g, " ").trim();
+    ? "Please call us today so a manager can fix this immediately."
+    : "Please contact us directly so we can make this right.";
+  return `${intro} We're sorry your ${serviceEntity} experience in ${locality} did not meet expectations. ${directEnding}`
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildPostSummary(input: {
@@ -1765,6 +1878,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     searchIntentSignals: string[];
     competitorCitationSignals: string[];
     qaPair?: { question: string; answer: string } | null;
+    systemMessage?: string | null;
   }): string {
     const pageTitle = input.pageContext.pageTitle ?? "N/A";
     const pageH1 = input.pageContext.h1 ?? "N/A";
@@ -1782,6 +1896,10 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     const qaPromptLine = input.qaPair
       ? `${input.qaPair.question} => ${input.qaPair.answer}`
       : "No explicit Q&A pair selected";
+    const operatorSystemMessage =
+      typeof input.systemMessage === "string" && input.systemMessage.trim()
+        ? input.systemMessage.trim()
+        : null;
 
     return [
       "You are a senior local SEO content writer producing GBP post copy.",
@@ -1827,14 +1945,18 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       `- Search intent signals: ${searchIntentLine}`,
       `- Competitor citation signals: ${competitorLine}`,
       `- GBP Q&A seed angle: ${qaPromptLine}`,
+      operatorSystemMessage ? `- Operator system message: ${operatorSystemMessage}` : null,
       "",
       "Output requirements:",
       "- longForm should read like a polished local service update and align with AI retrieval relevance (EEAT, factual clarity, local intent).",
       "- snippet should be concise, actionable, and optimized for GBP readability with the short URL.",
       "- Make the first 2 to 3 sentences highly quotable by Gemini and local AI summaries.",
+      operatorSystemMessage ? "- Treat the operator system message as a strict instruction override when policy-safe." : null,
       "",
       "Now return JSON only."
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   private async generatePostCopy(input: {
@@ -1854,6 +1976,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     competitorCitationSignals: string[];
     qaPair?: { question: string; answer: string } | null;
     ctaUrl?: string | null;
+    systemMessage?: string | null;
   }): Promise<GeneratedPostCopy> {
     const fallback = buildEeatLongFormPost({
       locationTitle: input.locationTitle,
@@ -1907,7 +2030,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         localQuestionIntents: input.localQuestionIntents,
         searchIntentSignals: input.searchIntentSignals,
         competitorCitationSignals: input.competitorCitationSignals,
-        qaPair: input.qaPair
+        qaPair: input.qaPair,
+        systemMessage: input.systemMessage
       });
 
       const response = await fetch(
@@ -5040,6 +5164,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
       return true;
     });
+    const sitemapUrls = await this.loadSitemapUrls(input.context.settings.sitemapUrl);
     const externalUrls = [...new Set(
       [...input.context.settings.photoAssetUrls, ...toStringArray(input.action.payload.mediaUrls)]
         .map((value) => normalizeHttpUrl(value))
@@ -5895,6 +6020,185 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     };
   }
 
+  private async executeManualPostToolPublish(input: {
+    action: BlitzAction;
+    context: RunContext;
+    sitemapUrls: string[];
+    allowedAssets: ClientMediaAssetRecord[];
+    ctaUrlFromPayload: string | null;
+    mediaUrlFromPayload: string | null;
+  }): Promise<Record<string, unknown>> {
+    const payload = input.action.payload;
+    const warnings: string[] = [];
+    const locationId = typeof payload.locationId === "string" ? payload.locationId : null;
+    const locationName = typeof payload.locationName === "string" ? payload.locationName : null;
+    const location =
+      input.context.locations.find((entry) => {
+        if (locationId && entry.locationId === locationId) {
+          return true;
+        }
+        if (locationName && entry.locationName === locationName) {
+          return true;
+        }
+        return false;
+      }) ?? input.context.locations[0];
+    if (!location) {
+      throw new Error("No GBP location available for manual post tool publish.");
+    }
+
+    const selectedAssetId = typeof payload.mediaAssetId === "string" ? payload.mediaAssetId : null;
+    const selectedAssetFromPayload = selectedAssetId
+      ? input.allowedAssets.find((asset) => asset.id === selectedAssetId) ?? null
+      : null;
+    if (selectedAssetId && !selectedAssetFromPayload) {
+      warnings.push(`Configured media asset ${selectedAssetId} is unavailable. Post will publish text-only.`);
+    }
+
+    const selectedAsset =
+      selectedAssetFromPayload ??
+      (input.allowedAssets.length
+        ? input.allowedAssets[hashStringToNumber(`${input.action.id}:manual-asset`) % input.allowedAssets.length]
+        : null);
+    if (!selectedAsset && !input.mediaUrlFromPayload) {
+      warnings.push("No approved media assets found for this client. Publishing text-only.");
+    }
+
+    const landing = this.selectLandingUrl({
+      action: input.action,
+      context: input.context,
+      location,
+      index: 0,
+      sitemapUrls: input.sitemapUrls
+    });
+    const tinyUrlResult = await this.createTinyUrl(landing.landingUrl);
+    if (!tinyUrlResult.success && tinyUrlResult.error) {
+      warnings.push(`TinyURL fallback used: ${tinyUrlResult.error}`);
+    }
+    const ctaUrl = input.ctaUrlFromPayload ?? tinyUrlResult.tinyUrl;
+    const pageContext = await this.fetchLandingPageContext(landing.landingUrl);
+    const snapshot = await this.fetchLocationSnapshot({ context: input.context, location });
+    const competitors = await this.discoverTopCompetitors({
+      snapshot,
+      location,
+      objectives: input.context.settings.objectives,
+      maxResults: 5
+    });
+    const signalBundle = await this.buildTrendSignalBundle({
+      location,
+      snapshot,
+      pageContext,
+      sitemapUrls: input.sitemapUrls,
+      objectives: input.context.settings.objectives,
+      competitors
+    });
+    const suggestions = await this.generateLocationSemanticSuggestions({
+      location,
+      snapshot,
+      competitors,
+      objectives: input.context.settings.objectives,
+      settings: input.context.settings,
+      sitemapUrls: input.sitemapUrls
+    });
+    const qaPair = suggestions.qaPairs[0] ?? null;
+    const systemMessage =
+      typeof payload.systemMessage === "string" && payload.systemMessage.trim()
+        ? payload.systemMessage.trim()
+        : null;
+    const toneOverride =
+      typeof payload.toneOverride === "string" && payload.toneOverride.trim()
+        ? payload.toneOverride.trim()
+        : input.context.settings.tone;
+    const archetype = buildBurstArchetypePlan(
+      hashStringToNumber(`${input.action.id}:manual-archetype`) % 8,
+      toStringArray(payload.archetypes)
+    );
+    const generatedCopy = await this.generatePostCopy({
+      locationTitle: location.title ?? snapshot.title ?? "our business",
+      objective: "manual_post_tool_publish",
+      ordinal: 1,
+      archetype,
+      tone: toneOverride,
+      wordRange: {
+        min: input.context.settings.postWordCountMin,
+        max: input.context.settings.postWordCountMax
+      },
+      landingUrl: landing.landingUrl,
+      shortUrl: tinyUrlResult.tinyUrl,
+      pageContext,
+      objectives: input.context.settings.objectives,
+      localTrendSignals: signalBundle.localTrendSignals,
+      localQuestionIntents: signalBundle.localQuestionIntents,
+      searchIntentSignals: signalBundle.searchIntentSignals,
+      competitorCitationSignals: signalBundle.competitorCitationSignals,
+      qaPair,
+      ctaUrl,
+      systemMessage
+    });
+    if (generatedCopy.warning) {
+      warnings.push(generatedCopy.warning);
+    }
+
+    const summary = input.context.settings.eeatStructuredSnippetEnabled
+      ? generatedCopy.snippet
+      : buildPostSummary({
+          locationTitle: location.title ?? "our business",
+          objective: "manual_post_tool_publish",
+          ordinal: 1,
+          payload: input.action.payload
+        });
+
+    let mediaUrl: string | undefined = input.mediaUrlFromPayload ?? undefined;
+    let processedStoragePath: string | null = null;
+    let mediaGenerationError: string | null = null;
+    if (!mediaUrl && selectedAsset) {
+      const mediaResult = await this.generateQrOverlayMedia({
+        asset: selectedAsset,
+        clientId: input.action.clientId ?? input.context.connection.clientId,
+        actionId: input.action.id,
+        qrUrl: landing.landingUrl
+      });
+      mediaUrl = mediaResult.mediaUrl ?? undefined;
+      processedStoragePath = mediaResult.processedStoragePath;
+      mediaGenerationError = mediaResult.error;
+      if (mediaGenerationError) {
+        warnings.push(mediaGenerationError);
+      }
+    }
+
+    const response = await input.context.client.publishLocalPost(location.accountId, location.locationId, {
+      summary,
+      topicType: "STANDARD",
+      mediaUrl,
+      ctaUrl
+    });
+
+    return {
+      objective: "manual_post_tool_publish",
+      status: "published",
+      locationName: location.locationName,
+      locationId: location.locationId,
+      sourceLandingUrl: landing.landingUrl,
+      tinyUrl: tinyUrlResult.tinyUrl,
+      ctaUrl,
+      mediaAssetId: selectedAsset?.id ?? null,
+      mediaProcessedStoragePath: processedStoragePath,
+      mediaGenerationError,
+      contentProvider: generatedCopy.provider,
+      contentModel: generatedCopy.model,
+      postTitle: generatedCopy.title,
+      wordCount: wordCount(generatedCopy.longForm),
+      publishedPosts: [
+        {
+          name: response.name,
+          accountId: location.accountId,
+          locationId: location.locationId,
+          locationName: location.locationName
+        }
+      ],
+      warnings
+    };
+  }
+
   private async executePostPublish(input: {
     action: BlitzAction;
     context: RunContext;
@@ -5909,22 +6213,10 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       minQaPairs,
       maxQaPairs
     );
+    const enforcedPostsPerWeek = HARDCODED_POSTS_PER_WEEK;
+    const enforcedPostWindows = buildHardcodedWeeklyPostWindows();
     const requireOperatorApproval =
       input.objective !== "publish_scheduled_artifact" && geoContentMetadata.requireOperatorApproval !== false;
-    const dripMinDays = clamp(toNumber(input.action.payload.dripMinDays, toNumber(geoContentMetadata.dripMinDays, 3)), 1, 14);
-    const dripMaxDays = clamp(
-      toNumber(input.action.payload.dripMaxDays, toNumber(geoContentMetadata.dripMaxDays, 4)),
-      dripMinDays,
-      21
-    );
-    const followUpCount = clamp(
-      toNumber(
-        input.action.payload.followUpCount,
-        toNumber(geoContentMetadata.followUpCount, Math.max(6, input.context.settings.postFrequencyPerWeek * 3))
-      ),
-      1,
-      30
-    );
     const ctaUrlFromPayload = normalizeHttpUrl(
       typeof input.action.payload.ctaUrl === "string" ? input.action.payload.ctaUrl : null
     );
@@ -5941,6 +6233,63 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
       return true;
     });
+    const sitemapUrls = await this.loadSitemapUrls(input.context.settings.sitemapUrl);
+    const uniqueAssetPool = [...allowedAssets].sort((left, right) => {
+      const leftScore = hashStringToNumber(`${input.action.id}:${left.id}`);
+      const rightScore = hashStringToNumber(`${input.action.id}:${right.id}`);
+      return leftScore - rightScore;
+    });
+    const usedAssetIds = new Set<string>();
+    const pickNextUniqueAsset = (): ClientMediaAssetRecord | null => {
+      const next = uniqueAssetPool.find((asset) => !usedAssetIds.has(asset.id));
+      if (!next) {
+        return null;
+      }
+      usedAssetIds.add(next.id);
+      return next;
+    };
+    const usedLandingUrls = new Set<string>();
+    const resolveUniqueLandingUrl = (location: ResolvedLocation, index: number): { landingUrl: string; source: "payload" | "sitemap" | "default" } => {
+      const selected = this.selectLandingUrl({
+        action: input.action,
+        context: input.context,
+        location,
+        index,
+        sitemapUrls
+      });
+      if (selected.source !== "sitemap" || sitemapUrls.length <= 1) {
+        const normalized = normalizeHttpUrl(selected.landingUrl);
+        if (normalized) {
+          usedLandingUrls.add(normalized.toLowerCase());
+        }
+        return selected;
+      }
+
+      const seed = hashStringToNumber(`${input.action.id}:${location.locationId}:${index}:landing-unique`);
+      for (let offset = 0; offset < sitemapUrls.length; offset += 1) {
+        const candidate = sitemapUrls[(seed + offset) % sitemapUrls.length];
+        const normalizedCandidate = normalizeHttpUrl(candidate);
+        if (!normalizedCandidate) {
+          continue;
+        }
+        const key = normalizedCandidate.toLowerCase();
+        if (usedLandingUrls.has(key)) {
+          continue;
+        }
+        usedLandingUrls.add(key);
+        return {
+          landingUrl: normalizedCandidate,
+          source: "sitemap"
+        };
+      }
+
+      const normalizedSelected = normalizeHttpUrl(selected.landingUrl);
+      if (normalizedSelected) {
+        usedLandingUrls.add(normalizedSelected.toLowerCase());
+      }
+      return selected;
+    };
+    const usedPostFingerprints = new Set<string>();
     const noAssetMediaMode =
       input.objective !== "schedule_follow_up_posts" &&
       input.objective !== "publish_scheduled_artifact" &&
@@ -5968,9 +6317,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
 
       const selectedAssetId = typeof artifactMetadata.mediaAssetId === "string" ? artifactMetadata.mediaAssetId : null;
-      const selectedAsset =
-        allowedAssets.find((asset) => asset.id === selectedAssetId) ??
-        (allowedAssets.length > 0 ? allowedAssets[0] : null);
+      const selectedAsset = selectedAssetId ? allowedAssets.find((asset) => asset.id === selectedAssetId) ?? null : null;
       const landingUrl =
         normalizeHttpUrl(typeof artifactMetadata.landingUrl === "string" ? artifactMetadata.landingUrl : null) ??
         normalizeHttpUrl(typeof artifactMetadata.sourceLandingUrl === "string" ? artifactMetadata.sourceLandingUrl : null) ??
@@ -5987,6 +6334,13 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       let mediaUrl: string | undefined = mediaUrlFromPayload ?? undefined;
       let processedStoragePath: string | null = null;
       let mediaGenerationError: string | null = null;
+      const warnings: string[] = [];
+      if (!selectedAssetId && !mediaUrlFromPayload) {
+        warnings.push("Scheduled artifact has no assigned media asset. Publishing text-only to avoid duplicate/random asset reuse.");
+      }
+      if (selectedAssetId && !selectedAsset) {
+        warnings.push(`Scheduled artifact media asset ${selectedAssetId} is not available. Publishing text-only.`);
+      }
       if (!mediaUrl && selectedAsset && landingUrl) {
         const mediaResult = await this.generateQrOverlayMedia({
           asset: selectedAsset,
@@ -6017,6 +6371,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         mediaAssetId: selectedAsset?.id ?? null,
         mediaProcessedStoragePath: processedStoragePath,
         mediaGenerationError,
+        warnings,
         publishedPosts: [
           {
             name: response.name,
@@ -6026,6 +6381,17 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           }
         ]
       };
+    }
+
+    if (input.objective === "manual_post_tool_publish") {
+      return this.executeManualPostToolPublish({
+        action: input.action,
+        context: input.context,
+        sitemapUrls,
+        allowedAssets,
+        ctaUrlFromPayload,
+        mediaUrlFromPayload
+      });
     }
 
     const publishedPosts: Array<Record<string, unknown>> = [];
@@ -6038,20 +6404,13 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         "No approved client media assets are available. Publishing text-only GBP posts (no fallback image)."
       );
     }
-    const sitemapUrls = await this.loadSitemapUrls(input.context.settings.sitemapUrl);
     const contentBundles = new Map<string, ContentLocationBundle>();
     if (normalizeHttpUrl(input.context.settings.sitemapUrl) && sitemapUrls.length === 0) {
       executionWarnings.push("Configured sitemap URL did not return usable page URLs; fallback URL strategy was used.");
     }
 
     for (const location of input.context.locations) {
-      const landing = this.selectLandingUrl({
-        action: input.action,
-        context: input.context,
-        location,
-        index: 0,
-        sitemapUrls
-      });
+      const landing = resolveUniqueLandingUrl(location, 0);
       const pageContext = await this.fetchLandingPageContext(landing.landingUrl);
       const snapshot = await this.fetchLocationSnapshot({ context: input.context, location });
       const competitors = await this.discoverTopCompetitors({
@@ -6144,16 +6503,54 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
     }
 
+    const ensureUniquePostCopy = (inputCopy: {
+      generatedCopy: GeneratedPostCopy;
+      landingUrl: string;
+      shortUrl: string;
+      archetype: BurstArchetypePlan;
+      index: number;
+    }): GeneratedPostCopy | null => {
+      let nextCopy = inputCopy.generatedCopy;
+      let fingerprint = buildPostFingerprint({
+        title: nextCopy.title,
+        snippet: nextCopy.snippet,
+        longForm: nextCopy.longForm,
+        landingUrl: inputCopy.landingUrl,
+        archetype: inputCopy.archetype.archetype
+      });
+      if (!usedPostFingerprints.has(fingerprint)) {
+        usedPostFingerprints.add(fingerprint);
+        return nextCopy;
+      }
+
+      const uniquenessSuffix = toSentenceCase(summarizeUrlPath(inputCopy.landingUrl)).slice(0, 38) || `Angle ${inputCopy.index + 1}`;
+      const adjustedLongFormRaw = `${nextCopy.longForm}\n\n## Local URL Focus\nThis version aligns to ${inputCopy.landingUrl} with a distinct local angle and CTA path.`;
+      const adjustedLongForm = truncateToMaxWords(adjustedLongFormRaw, input.context.settings.postWordCountMax);
+      const adjustedSnippet = `${nextCopy.snippet.slice(0, 1280)} Focus URL: ${inputCopy.shortUrl}`.slice(0, 1450);
+      nextCopy = {
+        ...nextCopy,
+        title: uniquePostTitle(nextCopy.title, uniquenessSuffix),
+        longForm: adjustedLongForm,
+        snippet: adjustedSnippet
+      };
+
+      fingerprint = buildPostFingerprint({
+        title: nextCopy.title,
+        snippet: nextCopy.snippet,
+        longForm: nextCopy.longForm,
+        landingUrl: inputCopy.landingUrl,
+        archetype: inputCopy.archetype.archetype
+      });
+      if (usedPostFingerprints.has(fingerprint)) {
+        return null;
+      }
+
+      usedPostFingerprints.add(fingerprint);
+      return nextCopy;
+    };
+
     if (input.objective === "schedule_follow_up_posts") {
-      const explicitWindows = toStringArray(input.action.payload.windows);
-      const windows = explicitWindows.length
-        ? explicitWindows
-        : buildDefaultGeoDripWindows({
-            count: followUpCount,
-            minGapDays: dripMinDays,
-            maxGapDays: dripMaxDays,
-            seed: `${input.action.id}:geo-drip`
-          });
+      const windows = enforcedPostWindows;
       const scheduledArtifacts: Array<Record<string, unknown>> = [];
 
       for (let index = 0; index < windows.length; index += 1) {
@@ -6165,13 +6562,11 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         }
 
         const window = windows[index] ?? `+${index + 1}d`;
-        const landing = this.selectLandingUrl({
-          action: input.action,
-          context: input.context,
-          location: bundle.location,
-          index,
-          sitemapUrls
-        });
+        const selectedAsset = pickNextUniqueAsset();
+        if (!selectedAsset && allowedAssets.length > 0) {
+          executionWarnings.push("Asset pool exhausted for scheduled follow-up drafts. Remaining drafts will be text-only to avoid duplicate image reuse.");
+        }
+        const landing = resolveUniqueLandingUrl(bundle.location, index);
         const tinyUrlResult = await this.createTinyUrl(landing.landingUrl);
         const ctaUrl = ctaUrlFromPayload ?? tinyUrlResult.tinyUrl;
         const pageContext = await this.fetchLandingPageContext(landing.landingUrl);
@@ -6198,6 +6593,17 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           qaPair,
           ctaUrl
         });
+        const uniqueCopy = ensureUniquePostCopy({
+          generatedCopy,
+          landingUrl: landing.landingUrl,
+          shortUrl: tinyUrlResult.tinyUrl,
+          archetype,
+          index
+        });
+        if (!uniqueCopy) {
+          executionWarnings.push(`Skipped duplicate follow-up draft candidate for ${landing.landingUrl}.`);
+          continue;
+        }
         const scheduledFor = parseRelativeWindow(new Date(), window, `${bundle.location.locationId}:${index}`);
         await this.deps.repository.createContentArtifact({
           organizationId: input.action.organizationId ?? input.context.connection.organizationId,
@@ -6205,10 +6611,10 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           runId: input.action.runId,
           phase: "content",
           channel: "gbp",
-          title: generatedCopy.title,
-          body: generatedCopy.longForm,
+          title: uniqueCopy.title,
+          body: uniqueCopy.longForm,
           metadata: {
-            snippet: generatedCopy.snippet,
+            snippet: uniqueCopy.snippet,
             locationName: bundle.location.locationName,
             locationId: bundle.location.locationId,
             landingUrl: landing.landingUrl,
@@ -6219,6 +6625,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             searchIntentSignals: bundle.signalBundle.searchIntentSignals,
             competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
             qaPair,
+            mediaAssetId: selectedAsset?.id ?? null,
             operatorWorkflowStatus: requireOperatorApproval ? "pending_approval" : "scheduled",
             recommendedScheduledFor: scheduledFor
           },
@@ -6229,9 +6636,10 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           locationName: bundle.location.locationName,
           scheduledFor,
           window,
-          title: generatedCopy.title,
+          title: uniqueCopy.title,
           landingUrl: landing.landingUrl,
-          archetype: archetype.archetype
+          archetype: archetype.archetype,
+          mediaAssetId: selectedAsset?.id ?? null
         });
       }
 
@@ -6242,22 +6650,14 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         scheduledArtifactsCreated: requireOperatorApproval ? 0 : scheduledArtifacts.length,
         draftArtifactsCreated: requireOperatorApproval ? scheduledArtifacts.length : 0,
         scheduledArtifacts,
-        postFrequencyPerWeek: input.context.settings.postFrequencyPerWeek,
-        dripCadenceDays: {
-          min: dripMinDays,
-          max: dripMaxDays
-        },
+        postFrequencyPerWeek: enforcedPostsPerWeek,
+        postsPerDay: HARDCODED_POSTS_PER_DAY,
+        postingDaysPerWeek: HARDCODED_POST_DAYS_PER_WEEK,
         locationCount: input.context.locations.length
       };
     }
 
-    const postCount = Math.max(
-      10,
-      Math.min(
-        this.options.maxPostBurst,
-        clamp(toNumber(input.action.payload.postCount, 12), 10, 14)
-      )
-    );
+    const postCount = Math.min(this.options.maxPostBurst, enforcedPostsPerWeek);
 
     for (let index = 0; index < postCount; index += 1) {
       const bundle = input.context.locations.length
@@ -6267,14 +6667,11 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         continue;
       }
 
-      const selectedAsset = allowedAssets.length > 0 ? allowedAssets[index % allowedAssets.length] : null;
-      const landing = this.selectLandingUrl({
-        action: input.action,
-        context: input.context,
-        location: bundle.location,
-        index,
-        sitemapUrls
-      });
+      const selectedAsset = pickNextUniqueAsset();
+      if (!selectedAsset && allowedAssets.length > 0) {
+        executionWarnings.push("Asset pool exhausted for this run. Remaining posts will be text-only to avoid duplicate image reuse.");
+      }
+      const landing = resolveUniqueLandingUrl(bundle.location, index);
       const tinyUrlResult = await this.createTinyUrl(landing.landingUrl);
       if (!tinyUrlResult.success && tinyUrlResult.error) {
         executionWarnings.push(`TinyURL fallback for ${landing.landingUrl}: ${tinyUrlResult.error}`);
@@ -6325,8 +6722,20 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         executionWarnings.push(`Content generation fallback for ${landing.landingUrl}: ${generatedCopy.warning}`);
       }
 
+      const uniqueCopy = ensureUniquePostCopy({
+        generatedCopy,
+        landingUrl: landing.landingUrl,
+        shortUrl: tinyUrlResult.tinyUrl,
+        archetype,
+        index
+      });
+      if (!uniqueCopy) {
+        executionWarnings.push(`Skipped duplicate post candidate for ${landing.landingUrl}.`);
+        continue;
+      }
+
       const summary = input.context.settings.eeatStructuredSnippetEnabled
-        ? generatedCopy.snippet
+        ? uniqueCopy.snippet
         : buildPostSummary({
             locationTitle: bundle.location.title ?? "our business",
             objective: input.objective,
@@ -6335,15 +6744,16 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           });
 
       if (requireOperatorApproval) {
-        const draftScheduledFor = parseRelativeWindow(new Date(), `+${dripMinDays}d`, `${bundle.location.locationId}:${index}:approval`);
+        const approvalWindow = enforcedPostWindows[index % enforcedPostWindows.length] ?? "+1d@14:30";
+        const draftScheduledFor = parseRelativeWindow(new Date(), approvalWindow, `${bundle.location.locationId}:${index}:approval`);
         await this.deps.repository.createContentArtifact({
           organizationId: input.action.organizationId ?? input.context.connection.organizationId,
           clientId: input.action.clientId ?? input.context.connection.clientId,
           runId: input.action.runId,
           phase: "content",
           channel: "gbp",
-          title: generatedCopy.title,
-          body: generatedCopy.longForm,
+          title: uniqueCopy.title,
+          body: uniqueCopy.longForm,
           metadata: {
             snippet: summary,
             archetype: archetype.archetype,
@@ -6369,7 +6779,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         });
 
         generatedLongFormDrafts.push({
-          title: generatedCopy.title,
+          title: uniqueCopy.title,
           archetype: archetype.archetype,
           locationName: bundle.location.locationName,
           locationId: bundle.location.locationId,
@@ -6380,23 +6790,23 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           sourceLandingUrl: landing.landingUrl,
           tinyUrl: tinyUrlResult.tinyUrl,
           urlSource: landing.source,
-          contentProvider: generatedCopy.provider,
-          contentModel: generatedCopy.model,
-          contentWarning: generatedCopy.warning ?? null,
+          contentProvider: uniqueCopy.provider,
+          contentModel: uniqueCopy.model,
+          contentWarning: uniqueCopy.warning ?? null,
           trendSignals: bundle.signalBundle.localTrendSignals,
           localQuestionIntents: bundle.signalBundle.localQuestionIntents,
           searchIntentSignals: bundle.signalBundle.searchIntentSignals,
           competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
           qaPair,
           pageContext,
-          wordCount: wordCount(generatedCopy.longForm),
-          longForm: generatedCopy.longForm
+          wordCount: wordCount(uniqueCopy.longForm),
+          longForm: uniqueCopy.longForm
         });
 
         queuedForApproval.push({
           locationName: bundle.location.locationName,
           locationId: bundle.location.locationId,
-          title: generatedCopy.title,
+          title: uniqueCopy.title,
           archetype: archetype.archetype,
           sourceLandingUrl: landing.landingUrl,
           tinyUrl: tinyUrlResult.tinyUrl,
@@ -6418,10 +6828,10 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           runId: input.action.runId,
           phase: "content",
           channel: "gbp",
-          title: generatedCopy.title,
-          body: generatedCopy.longForm,
+          title: uniqueCopy.title,
+          body: uniqueCopy.longForm,
           metadata: {
-            snippet: generatedCopy.snippet,
+            snippet: uniqueCopy.snippet,
             archetype: archetype.archetype,
             locationName: bundle.location.locationName,
             locationId: bundle.location.locationId,
@@ -6441,7 +6851,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           publishedAt: nowIso()
         });
         generatedLongFormDrafts.push({
-          title: generatedCopy.title,
+          title: uniqueCopy.title,
           archetype: archetype.archetype,
           locationName: bundle.location.locationName,
           locationId: bundle.location.locationId,
@@ -6452,17 +6862,17 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           sourceLandingUrl: landing.landingUrl,
           tinyUrl: tinyUrlResult.tinyUrl,
           urlSource: landing.source,
-          contentProvider: generatedCopy.provider,
-          contentModel: generatedCopy.model,
-          contentWarning: generatedCopy.warning ?? null,
+          contentProvider: uniqueCopy.provider,
+          contentModel: uniqueCopy.model,
+          contentWarning: uniqueCopy.warning ?? null,
           trendSignals: bundle.signalBundle.localTrendSignals,
           localQuestionIntents: bundle.signalBundle.localQuestionIntents,
           searchIntentSignals: bundle.signalBundle.searchIntentSignals,
           competitorCitationSignals: bundle.signalBundle.competitorCitationSignals,
           qaPair,
           pageContext,
-          wordCount: wordCount(generatedCopy.longForm),
-          longForm: generatedCopy.longForm
+          wordCount: wordCount(uniqueCopy.longForm),
+          longForm: uniqueCopy.longForm
         });
         publishedPosts.push({
           name: response.name,
@@ -6471,7 +6881,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           locationId: bundle.location.locationId,
           locationName: bundle.location.locationName,
           title: bundle.location.title,
-          postTitle: generatedCopy.title,
+          postTitle: uniqueCopy.title,
           mediaAssetId: selectedAsset?.id ?? null,
           mediaProcessedStoragePath: processedStoragePath,
           sourceLandingUrl: landing.landingUrl,
@@ -6501,7 +6911,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         status: "approval_required",
         postCountRequested: postCount,
         draftArtifactsCreated: queuedForApproval.length,
-        postFrequencyPerWeek: input.context.settings.postFrequencyPerWeek,
+        postFrequencyPerWeek: enforcedPostsPerWeek,
+        postsPerDay: HARDCODED_POSTS_PER_DAY,
+        postingDaysPerWeek: HARDCODED_POST_DAYS_PER_WEEK,
         eeatStructuredSnippetEnabled: input.context.settings.eeatStructuredSnippetEnabled,
         qaSeedTarget: {
           min: minQaPairs,
@@ -6536,7 +6948,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       objective: input.objective,
       postCountRequested: postCount,
       postCountPublished: publishedPosts.length,
-      postFrequencyPerWeek: input.context.settings.postFrequencyPerWeek,
+      postFrequencyPerWeek: enforcedPostsPerWeek,
+      postsPerDay: HARDCODED_POSTS_PER_DAY,
+      postingDaysPerWeek: HARDCODED_POST_DAYS_PER_WEEK,
       eeatStructuredSnippetEnabled: input.context.settings.eeatStructuredSnippetEnabled,
       qaSeedTarget: {
         min: minQaPairs,
@@ -6567,11 +6981,29 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     action: BlitzAction;
     context: RunContext;
   }): Promise<Record<string, unknown>> {
+    const objective =
+      typeof input.action.payload.objective === "string"
+        ? normalizeText(input.action.payload.objective)
+        : "auto_reply_all_pending_reviews";
+    if (objective === "review_request_dispatch") {
+      return this.executeReviewRequestDispatch(input);
+    }
+
+    const organizationId = input.action.organizationId ?? input.context.connection.organizationId;
+    const clientId = input.action.clientId ?? input.context.connection.clientId;
+    const policy = await this.deps.repository.getAutopilotPolicy(clientId);
+    const settingsMetadata = asRecord(input.context.settings.metadata);
+    const policyDefaultMinRating = policy.reviewReplyAllRatingsEnabled ? 1 : 4;
+    const metadataMinRating = toNumber(settingsMetadata.reviewAutoReplyMinRating, policyDefaultMinRating);
+    const payloadMinRating = toNumber(input.action.payload.minAutoReplyRating, metadataMinRating);
+    const minAutoReplyRating = clamp(Math.round(payloadMinRating), 1, 5);
+
     const maxReplies = Math.max(
       1,
       Math.min(this.options.maxReviewRepliesPerAction, toNumber(input.action.payload.maxReplies, 25))
     );
     const replied: Array<Record<string, unknown>> = [];
+    const escalated: Array<Record<string, unknown>> = [];
     const failed: Array<Record<string, unknown>> = [];
     let pending = 0;
 
@@ -6581,7 +7013,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
 
       const reviews = await input.context.client.fetchReviews(location.accountId, location.locationId);
-      const pendingReviews = reviews.filter((review) => !review.reviewReply);
+      const pendingReviews = reviews.filter((review) => !review.reviewReply?.comment);
       pending += pendingReviews.length;
 
       for (const review of pendingReviews) {
@@ -6590,13 +7022,16 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         }
 
         const reviewId = parseReviewId(review.name, review.reviewId);
-        const alreadyPosted = await this.deps.repository.hasPostedReplyHistory(input.action.clientId ?? input.context.connection.clientId, reviewId);
+        const alreadyPosted = await this.deps.repository.hasPostedReplyHistory(clientId, reviewId);
         if (alreadyPosted) {
           continue;
         }
+
         const starRating = parseStarRating(review.starRating);
+        const reviewerName = review.reviewer?.displayName ?? "there";
+        const shouldEscalate = starRating > 0 && starRating < minAutoReplyRating;
         const replyText = replyForReview({
-          reviewerName: review.reviewer?.displayName ?? "there",
+          reviewerName,
           starRating,
           comment: review.comment ?? "",
           locationTitle: location.title ?? "our business",
@@ -6604,11 +7039,79 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           style: input.context.settings.reviewReplyStyle
         });
 
+        if (shouldEscalate) {
+          try {
+            const actionNeededId = await this.queueActionNeeded({
+              action: input.action,
+              organizationId,
+              clientId,
+              location,
+              title: `Manual review response needed (${starRating}-star)`,
+              description: `A ${starRating}-star review from ${reviewerName} was routed to operator approval before posting to GBP.`,
+              patch: {},
+              updateMask: [],
+              operations: [
+                {
+                  kind: "manual_review_reply",
+                  reviewName: review.name,
+                  reviewId,
+                  reviewerName,
+                  rating: starRating,
+                  reviewText: review.comment ?? "",
+                  suggestedReply: replyText
+                }
+              ],
+              objective: "manual_review_response",
+              actionType: "review_reply",
+              riskTier: starRating <= 2 ? "critical" : "high",
+              metadata: {
+                reviewName: review.name,
+                reviewId,
+                reviewerName,
+                rating: starRating,
+                reviewText: review.comment ?? "",
+                suggestedReply: replyText,
+                reason: `rating_below_threshold_${minAutoReplyRating}`
+              }
+            });
+
+            await this.deps.repository.recordReviewReplyHistory({
+              organizationId,
+              clientId,
+              runId: input.action.runId,
+              locationId: location.locationId,
+              reviewId,
+              reviewRating: starRating,
+              reviewText: review.comment ?? "",
+              replyText,
+              replyStatus: "escalated"
+            });
+
+            escalated.push({
+              reviewName: review.name,
+              reviewId,
+              locationName: location.locationName,
+              accountId: location.accountId,
+              rating: starRating,
+              actionNeededId
+            });
+          } catch (error) {
+            failed.push({
+              reviewName: review.name,
+              reviewId,
+              locationName: location.locationName,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+          continue;
+        }
+
         try {
           await input.context.client.postReviewReply(location.accountId, location.locationId, reviewId, replyText);
           await this.deps.repository.recordReviewReplyHistory({
-            organizationId: input.action.organizationId ?? input.context.connection.organizationId,
-            clientId: input.action.clientId ?? input.context.connection.clientId,
+            organizationId,
+            clientId,
+            runId: input.action.runId,
             locationId: location.locationId,
             reviewId,
             reviewRating: starRating,
@@ -6625,8 +7128,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           });
         } catch (error) {
           await this.deps.repository.recordReviewReplyHistory({
-            organizationId: input.action.organizationId ?? input.context.connection.organizationId,
-            clientId: input.action.clientId ?? input.context.connection.clientId,
+            organizationId,
+            clientId,
+            runId: input.action.runId,
             locationId: location.locationId,
             reviewId,
             reviewRating: starRating,
@@ -6645,17 +7149,204 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       }
     }
 
-    if (pending > 0 && replied.length === 0) {
+    if (pending > 0 && replied.length === 0 && escalated.length === 0) {
       throw new Error(`Review reply action found pending reviews but failed to post replies: ${failed[0]?.error ?? "unknown error"}`);
     }
 
     return {
-      objective: input.action.payload.objective ?? "auto_reply_all_pending_reviews",
+      objective,
       pendingReviewsFound: pending,
+      minAutoReplyRating,
       repliesPosted: replied.length,
+      repliesEscalated: escalated.length,
       repliesFailed: failed.length,
       replied,
+      escalated,
       failed
+    };
+  }
+
+  private async executeReviewRequestDispatch(input: {
+    action: BlitzAction;
+    context: RunContext;
+  }): Promise<Record<string, unknown>> {
+    const channelRaw = typeof input.action.payload.channel === "string" ? input.action.payload.channel : "";
+    const channel = channelRaw.trim().toLowerCase();
+    const dryRun =
+      (process.env.BLITZ_REVIEW_REQUEST_DRY_RUN ?? "false").trim().toLowerCase() === "true";
+    const objective =
+      typeof input.action.payload.objective === "string"
+        ? normalizeText(input.action.payload.objective)
+        : "review_request_dispatch";
+
+    if (channel !== "sms" && channel !== "email") {
+      throw new Error(`Unsupported review request channel: ${channelRaw || "unknown"}`);
+    }
+
+    const toPhone = typeof input.action.payload.toPhone === "string" ? input.action.payload.toPhone.trim() : "";
+    const toEmail = typeof input.action.payload.toEmail === "string" ? input.action.payload.toEmail.trim() : "";
+    const reviewUrl = normalizeHttpUrl(
+      typeof input.action.payload.reviewUrl === "string" ? input.action.payload.reviewUrl : null
+    );
+    const baseMessage =
+      typeof input.action.payload.messageBody === "string"
+        ? normalizeText(input.action.payload.messageBody)
+        : "";
+    const fallbackMessage = reviewUrl
+      ? `Thanks for choosing us. If we earned it, please leave a quick review: ${reviewUrl}`
+      : "Thanks for choosing us. If we earned it, please leave a quick review.";
+    const messageBody = (baseMessage || fallbackMessage).slice(0, 1400);
+
+    if (channel === "sms" && !toPhone) {
+      return {
+        objective,
+        status: "skipped_missing_recipient",
+        channel,
+        delivered: false
+      };
+    }
+    if (channel === "email" && !toEmail) {
+      return {
+        objective,
+        status: "skipped_missing_recipient",
+        channel,
+        delivered: false
+      };
+    }
+
+    if (dryRun) {
+      return {
+        objective,
+        status: "dry_run",
+        channel,
+        delivered: false,
+        messageBody
+      };
+    }
+
+    if (channel === "sms") {
+      const result = await this.sendTwilioSmsReviewRequest({
+        toPhone,
+        messageBody
+      });
+      return {
+        objective,
+        status: "sent",
+        channel,
+        provider: "twilio",
+        delivered: true,
+        toPhone,
+        providerMessageId: result.providerMessageId,
+        providerStatus: result.providerStatus
+      };
+    }
+
+    const subject =
+      typeof input.action.payload.emailSubject === "string" && input.action.payload.emailSubject.trim().length > 0
+        ? input.action.payload.emailSubject.trim()
+        : "Quick favor from your recent service visit";
+    const emailBody =
+      typeof input.action.payload.emailBody === "string" && input.action.payload.emailBody.trim().length > 0
+        ? input.action.payload.emailBody.trim()
+        : messageBody;
+    const result = await this.sendSendgridReviewRequestEmail({
+      toEmail,
+      subject,
+      bodyText: emailBody
+    });
+    return {
+      objective,
+      status: "sent",
+      channel,
+      provider: "sendgrid",
+      delivered: true,
+      toEmail,
+      providerMessageId: result.providerMessageId,
+      providerStatus: result.providerStatus
+    };
+  }
+
+  private async sendTwilioSmsReviewRequest(input: {
+    toPhone: string;
+    messageBody: string;
+  }): Promise<{ providerMessageId: string | null; providerStatus: string | null }> {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+    const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+    const fromPhone = process.env.TWILIO_FROM_NUMBER?.trim();
+    if (!accountSid || !authToken || !fromPhone) {
+      throw new Error("Twilio is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.");
+    }
+
+    const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`;
+    const body = new URLSearchParams({
+      To: input.toPhone,
+      From: fromPhone,
+      Body: input.messageBody
+    });
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: body.toString()
+    });
+    const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!response.ok) {
+      const detail =
+        (payload && typeof payload.message === "string" && payload.message.trim()) ||
+        `HTTP ${response.status}`;
+      throw new Error(`Twilio review request send failed: ${detail}`);
+    }
+
+    return {
+      providerMessageId: payload && typeof payload.sid === "string" ? payload.sid : null,
+      providerStatus: payload && typeof payload.status === "string" ? payload.status : null
+    };
+  }
+
+  private async sendSendgridReviewRequestEmail(input: {
+    toEmail: string;
+    subject: string;
+    bodyText: string;
+  }): Promise<{ providerMessageId: string | null; providerStatus: string | null }> {
+    const apiKey = process.env.SENDGRID_API_KEY?.trim();
+    const fromEmail = process.env.SENDGRID_FROM_EMAIL?.trim();
+    const fromName = process.env.SENDGRID_FROM_NAME?.trim() || "Blitz Agent";
+    if (!apiKey || !fromEmail) {
+      throw new Error("SendGrid is not configured. Set SENDGRID_API_KEY and SENDGRID_FROM_EMAIL.");
+    }
+
+    const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: input.toEmail }] }],
+        from: {
+          email: fromEmail,
+          name: fromName
+        },
+        subject: input.subject,
+        content: [
+          {
+            type: "text/plain",
+            value: input.bodyText
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const detail = (await response.text().catch(() => "")).slice(0, 500);
+      throw new Error(`SendGrid review request send failed: HTTP ${response.status}${detail ? ` (${detail})` : ""}`);
+    }
+
+    return {
+      providerMessageId: response.headers.get("x-message-id"),
+      providerStatus: String(response.status)
     };
   }
 
@@ -6693,14 +7384,20 @@ export class GbpLiveActionExecutor implements ActionExecutor {
     }
 
     const recommendations: Array<Record<string, unknown>> = [];
+    const queuedActionNeededIds: string[] = [];
     const warnings: string[] = [];
+    const organizationId = input.action.organizationId ?? input.context.connection.organizationId;
+    const clientId = input.action.clientId ?? input.context.connection.clientId;
+    const shouldQueueActionsNeeded = input.action.payload.queueActionsNeeded !== false;
+    const lookbackDays = clamp(toNumber(input.action.payload.lookbackDays, 14), 7, 28);
+
     for (const location of input.context.locations) {
       try {
         const snapshot = await this.fetchLocationSnapshot({ context: input.context, location });
         const performance = await this.fetchRecentInteractionMetrics({
           accessToken: input.context.token.accessToken,
           locationName: location.locationName,
-          lookbackDays: clamp(toNumber(input.action.payload.lookbackDays, 14), 7, 28)
+          lookbackDays
         });
         const dominantSignal =
           performance.calls >= performance.directions && performance.calls >= performance.clicks
@@ -6708,16 +7405,61 @@ export class GbpLiveActionExecutor implements ActionExecutor {
             : performance.directions >= performance.clicks
               ? "directions"
               : "website_clicks";
+        const locationLabel = normalizeText(snapshot.title ?? location.title ?? "this location");
         const ctaVariants =
           dominantSignal === "calls"
-            ? ["Call for same-day service", "Speak with our team today"]
+            ? [
+                `Tap Call now for priority ${locationLabel} dispatch`,
+                "Call now to confirm same-day availability"
+              ]
             : dominantSignal === "directions"
-              ? ["Get directions now", "Plan your visit today"]
-              : ["Learn more on our site", "View service details today"];
+              ? [
+                  `Tap Directions now to visit ${locationLabel}`,
+                  "Get directions now before close of business"
+                ]
+              : [
+                  "Tap Website for service details and next available slot",
+                  "Open Website now to request scheduling"
+                ];
         const suggestedHoursAdjustment =
           !snapshot.specialHours && (performance.calls > 0 || performance.directions > 0)
             ? "Review special hours coverage for peak local demand windows."
             : "Current hours pattern does not need an automated change.";
+
+        if (shouldQueueActionsNeeded && suggestedHoursAdjustment.startsWith("Review")) {
+          const actionNeededId = await this.queueActionNeeded({
+            action: input.action,
+            organizationId,
+            clientId,
+            location,
+            title: "Review temporary/special hours recommendation",
+            description: `Interaction velocity indicates ${dominantSignal} as the dominant GBP action over the last ${lookbackDays} days.`,
+            patch: {},
+            updateMask: [],
+            operations: [
+              {
+                kind: "manual_hours_review",
+                locationName: location.locationName,
+                dominantSignal,
+                lookbackDays,
+                suggestedHoursAdjustment,
+                suggestedCtaVariants: ctaVariants,
+                recentMetrics: performance
+              }
+            ],
+            objective: "interaction_velocity_booster",
+            actionType: "hours_update",
+            riskTier: "medium",
+            metadata: {
+              dominantSignal,
+              lookbackDays,
+              recentMetrics: performance,
+              suggestedHoursAdjustment,
+              suggestedCtaVariants: ctaVariants
+            }
+          });
+          queuedActionNeededIds.push(actionNeededId);
+        }
 
         recommendations.push({
           locationName: location.locationName,
@@ -6727,7 +7469,13 @@ export class GbpLiveActionExecutor implements ActionExecutor {
           dominantSignal,
           suggestedCtaVariants: ctaVariants,
           suggestedHoursAdjustment,
-          operatorAction: suggestedHoursAdjustment.startsWith("Review") ? "manual_review_recommended" : "none"
+          operatorAction: suggestedHoursAdjustment.startsWith("Review") ? "manual_review_recommended" : "none",
+          interactionVelocityHint:
+            dominantSignal === "calls"
+              ? "Prioritize call-driven CTAs on posts and profile assets."
+              : dominantSignal === "directions"
+                ? "Prioritize direction-driven CTAs and location cues."
+                : "Prioritize website CTA variants tied to booking intent."
         });
       } catch (error) {
         warnings.push(`${location.locationName}: ${error instanceof Error ? error.message : String(error)}`);
@@ -6738,6 +7486,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       objective: input.action.payload.objective ?? "cta_and_timing_optimizer",
       status: "insight_recommendations_generated",
       locationCount: input.context.locations.length,
+      queuedActionsNeeded: queuedActionNeededIds.length,
+      queuedActionNeededIds,
       recommendations,
       warnings
     };

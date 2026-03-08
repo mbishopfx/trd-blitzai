@@ -35,6 +35,7 @@ Enterprise autonomous GBP optimization platform with policy-gated execution, att
 - `GET /api/v1/clients/{clientId}/actions-needed`
 - `PATCH /api/v1/clients/{clientId}/actions-needed/{actionNeededId}`
 - `POST /api/v1/clients/{clientId}/actions-needed/{actionNeededId}/approve`
+- `POST /api/v1/clients/{clientId}/review-ignition/webhook`
 
 ### Worker Event Contracts (`packages/domain`)
 
@@ -141,6 +142,7 @@ supabase db push
 - `GOOGLE_OAUTH_REDIRECT_URI` (optional override; defaults to `${NEXT_PUBLIC_SITE_URL}/api/v1/gbp/oauth/callback`)
 - `TINYURL_API_KEY` (required for GBP post CTA shortlinks; falls back to original URL when unset)
 - `REDIS_URL` (required to enqueue run jobs)
+- `BLITZ_REVIEW_WEBHOOK_SECRET` (required for unauthenticated CRM webhook ingestion)
 
 ### Railway (`apps/worker-ts`)
 
@@ -157,6 +159,11 @@ supabase db push
 - `GOOGLE_AI_STUDIO_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `GOOGLE_API_KEY` (optional aliases)
 - `GOOGLE_PLACES_API_KEY` / `GOOGLE_MAPS_API_KEY` (recommended for competitor benchmark + geocoding; falls back to `GOOGLE_API_KEY`)
 - `GEMINI_MODEL` (optional, defaults to `gemini-2.0-flash`)
+- `SCHEDULED_CONTENT_DISPATCHER_ENABLED` (set `true` to dispatch scheduled review/content artifacts)
+- `SCHEDULED_CONTENT_POLL_MS` / `SCHEDULED_CONTENT_BATCH_SIZE`
+- `BLITZ_REVIEW_REQUEST_DRY_RUN` (set `false` for live Twilio/SendGrid dispatch)
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` (SMS review requests)
+- `SENDGRID_API_KEY` / `SENDGRID_FROM_EMAIL` / `SENDGRID_FROM_NAME` (email review requests)
 
 ### Railway (`services/worker-py`)
 

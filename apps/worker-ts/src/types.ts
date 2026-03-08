@@ -128,12 +128,13 @@ export interface ClientMediaAssetRecord {
 export interface ReviewReplyHistoryRecord {
   organizationId: string;
   clientId: string;
+  runId?: string | null;
   locationId: string;
   reviewId: string;
   reviewRating: number;
   reviewText: string;
   replyText: string;
-  replyStatus: "posted" | "failed";
+  replyStatus: "pending" | "posted" | "failed" | "escalated";
   error?: string | null;
 }
 

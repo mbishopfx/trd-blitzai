@@ -1,6 +1,11 @@
 import type { BlitzPhase } from "@trd-aiblitz/domain";
 import type { ActionPlanner, PlannedAction } from "./types";
 
+const HARDCODED_POSTS_PER_DAY = 2;
+const HARDCODED_POST_DAYS_PER_WEEK = 3;
+const HARDCODED_POSTS_PER_WEEK = HARDCODED_POSTS_PER_DAY * HARDCODED_POST_DAYS_PER_WEEK;
+const HARDCODED_WEEKLY_WINDOWS = ["+1d@14:30", "+1d@19:00", "+3d@14:30", "+3d@19:00", "+5d@14:30", "+5d@19:00"];
+
 function baseAction(
   phase: BlitzPhase,
   actionType: PlannedAction["actionType"],
@@ -70,8 +75,10 @@ export class DefaultBlitzPlanner implements ActionPlanner {
         return [
           baseAction("content", "post_publish", "medium", {
             objective: "geo_content_burst",
-            postCount: 12,
+            postCount: HARDCODED_POSTS_PER_WEEK,
             cadence: "initial",
+            postsPerDay: HARDCODED_POSTS_PER_DAY,
+            postingDaysPerWeek: HARDCODED_POST_DAYS_PER_WEEK,
             archetypes: ["offer", "event", "proof", "did_you_know"],
             minQaPairs: 20,
             maxQaPairs: 24,
@@ -79,11 +86,11 @@ export class DefaultBlitzPlanner implements ActionPlanner {
           }),
           baseAction("content", "post_publish", "medium", {
             objective: "schedule_follow_up_posts",
-            cadence: "jittered",
-            windows: ["+3d", "+6d", "+10d", "+13d", "+17d", "+21d"],
-            dripMinDays: 3,
-            dripMaxDays: 4,
-            followUpCount: 8
+            cadence: "hardcoded_weekly",
+            windows: HARDCODED_WEEKLY_WINDOWS,
+            postsPerDay: HARDCODED_POSTS_PER_DAY,
+            postingDaysPerWeek: HARDCODED_POST_DAYS_PER_WEEK,
+            followUpCount: HARDCODED_POSTS_PER_WEEK
           })
         ];
       case "reviews":

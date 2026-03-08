@@ -102,6 +102,10 @@ function toInt(value: number, fallback: number, min: number, max: number): numbe
   return Math.max(min, Math.min(max, Math.round(value)));
 }
 
+const HARDCODED_POSTS_PER_DAY = 2;
+const HARDCODED_POST_DAYS_PER_WEEK = 3;
+const HARDCODED_POSTS_PER_WEEK = HARDCODED_POSTS_PER_DAY * HARDCODED_POST_DAYS_PER_WEEK;
+
 export default function ClientOrchestrationSettingsPage() {
   const { clientId } = useParams<{ clientId: string }>();
   const searchParams = useSearchParams();
@@ -114,7 +118,12 @@ export default function ClientOrchestrationSettingsPage() {
   const [sitemapUrl, setSitemapUrl] = useState("");
   const [defaultPostUrl, setDefaultPostUrl] = useState("");
   const [reviewReplyStyle, setReviewReplyStyle] = useState("balanced");
-  const [postFrequencyPerWeek, setPostFrequencyPerWeek] = useState(3);
+  const [reviewAutoReplyMinRating, setReviewAutoReplyMinRating] = useState(1);
+  const [reviewRequestUrl, setReviewRequestUrl] = useState("");
+  const [reviewRequestDailyCap, setReviewRequestDailyCap] = useState(24);
+  const [reviewRequestCooldownMinutes, setReviewRequestCooldownMinutes] = useState(30);
+  const [reviewRequestDelayMinutes, setReviewRequestDelayMinutes] = useState(10);
+  const [reviewRequestJitterMaxMinutes, setReviewRequestJitterMaxMinutes] = useState(30);
   const [postWordCountMin, setPostWordCountMin] = useState(500);
   const [postWordCountMax, setPostWordCountMax] = useState(800);
   const [eeatStructuredSnippetEnabled, setEeatStructuredSnippetEnabled] = useState(true);
@@ -150,6 +159,7 @@ export default function ClientOrchestrationSettingsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [existingMetadata, setExistingMetadata] = useState<Record<string, unknown>>({});
   const supabaseBrowserConfigured = isSupabaseBrowserConfigured();
 
   const selectedAssetSet = useMemo(() => new Set(selectedPhotoAssetIds), [selectedPhotoAssetIds]);
@@ -173,18 +183,25 @@ export default function ClientOrchestrationSettingsPage() {
         setSitemapUrl(settings.sitemapUrl ?? "");
         setDefaultPostUrl(settings.defaultPostUrl ?? "");
         setReviewReplyStyle(settings.reviewReplyStyle);
-        setPostFrequencyPerWeek(settings.postFrequencyPerWeek);
         setPostWordCountMin(settings.postWordCountMin);
         setPostWordCountMax(settings.postWordCountMax);
         setEeatStructuredSnippetEnabled(settings.eeatStructuredSnippetEnabled);
-        const geoContent = asRecord(asRecord(settings.metadata).geoContent);
+        const metadata = asRecord(settings.metadata);
+        setExistingMetadata(metadata);
+        setReviewAutoReplyMinRating(toInt(Number(metadata.reviewAutoReplyMinRating), 1, 1, 5));
+        setReviewRequestUrl(typeof metadata.reviewRequestUrl === "string" ? metadata.reviewRequestUrl : "");
+        setReviewRequestDailyCap(toInt(Number(metadata.reviewRequestDailyCap), 24, 1, 400));
+        setReviewRequestCooldownMinutes(toInt(Number(metadata.reviewRequestCooldownMinutes), 30, 5, 720));
+        setReviewRequestDelayMinutes(toInt(Number(metadata.reviewRequestDelayMinutes), 10, 0, 720));
+        setReviewRequestJitterMaxMinutes(toInt(Number(metadata.reviewRequestJitterMaxMinutes), 30, 0, 240));
+        const geoContent = asRecord(metadata.geoContent);
         setGeoRequireOperatorApproval(geoContent.requireOperatorApproval !== false);
         setGeoDripMinDays(toInt(Number(geoContent.dripMinDays), 3, 1, 14));
         setGeoDripMaxDays(toInt(Number(geoContent.dripMaxDays), 4, 1, 21));
         setGeoFollowUpCount(toInt(Number(geoContent.followUpCount), 8, 1, 30));
         setGeoQaTarget(toInt(Number(geoContent.qnaTarget), 24, 20, 30));
         setGeoFactBankText(toLines(toStringArray(geoContent.factBank)));
-        const mediaFlood = asRecord(asRecord(settings.metadata).mediaFlood);
+        const mediaFlood = asRecord(metadata.mediaFlood);
         setMediaFloodTargetAssets(toInt(Number(mediaFlood.targetAssets), 50, 5, 150));
         setMediaFloodBatchSize(toInt(Number(mediaFlood.batchSize), 12, 1, 30));
         setMediaFloodCooldownMs(toInt(Number(mediaFlood.cooldownMs), 350, 50, 5000));
@@ -271,12 +288,19 @@ export default function ClientOrchestrationSettingsPage() {
           sitemapUrl: sitemapUrl.trim() || null,
           defaultPostUrl: defaultPostUrl.trim() || null,
           reviewReplyStyle: reviewReplyStyle.trim(),
-          postFrequencyPerWeek,
+          postFrequencyPerWeek: HARDCODED_POSTS_PER_WEEK,
           postWordCountMin,
           postWordCountMax,
           eeatStructuredSnippetEnabled,
           metadata: {
+            ...existingMetadata,
             updatedFrom: "dashboard-client-orchestration",
+            reviewAutoReplyMinRating: toInt(reviewAutoReplyMinRating, 1, 1, 5),
+            reviewRequestUrl: reviewRequestUrl.trim() || null,
+            reviewRequestDailyCap: toInt(reviewRequestDailyCap, 24, 1, 400),
+            reviewRequestCooldownMinutes: toInt(reviewRequestCooldownMinutes, 30, 5, 720),
+            reviewRequestDelayMinutes: toInt(reviewRequestDelayMinutes, 10, 0, 720),
+            reviewRequestJitterMaxMinutes: toInt(reviewRequestJitterMaxMinutes, 30, 0, 240),
             geoContent: {
               requireOperatorApproval: geoRequireOperatorApproval,
               dripMinDays: toInt(geoDripMinDays, 3, 1, 14),
@@ -557,9 +581,11 @@ export default function ClientOrchestrationSettingsPage() {
         </p>
         <ClientTabs clientId={clientId} />
         <div className={styles.kpiRow}>
-          <span className={styles.badge}>Post frequency: {postFrequencyPerWeek}/week</span>
+          <span className={styles.badge}>Post frequency: {HARDCODED_POSTS_PER_WEEK}/week (locked)</span>
           <span className={styles.badge}>Word range: {postWordCountMin}-{postWordCountMax}</span>
           <span className={styles.badge}>EEAT snippets: {eeatStructuredSnippetEnabled ? "Enabled" : "Disabled"}</span>
+          <span className={styles.badge}>Auto reply min rating: {reviewAutoReplyMinRating}</span>
+          <span className={styles.badge}>Review request cap/day: {reviewRequestDailyCap}</span>
           <span className={styles.badge}>GEO approval gate: {geoRequireOperatorApproval ? "On" : "Off"}</span>
           <span className={styles.badge}>Media flood target: {mediaFloodTargetAssets}</span>
           <span className={styles.badge}>Allowed assets: {mediaAssets.filter((asset) => asset.isAllowedForPosts).length}</span>
@@ -602,6 +628,28 @@ export default function ClientOrchestrationSettingsPage() {
               placeholder="balanced"
             />
           </label>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Auto Reply Min Rating (1-5)</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={1}
+                max={5}
+                value={reviewAutoReplyMinRating}
+                onChange={(event) => setReviewAutoReplyMinRating(Number(event.target.value))}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Review Request URL</span>
+              <input
+                className={styles.input}
+                value={reviewRequestUrl}
+                onChange={(event) => setReviewRequestUrl(event.target.value)}
+                placeholder="https://g.page/r/.../review"
+              />
+            </label>
+          </div>
           <label className={styles.field}>
             <span className={styles.label}>Objectives (one per line)</span>
             <textarea
@@ -623,10 +671,10 @@ export default function ClientOrchestrationSettingsPage() {
               <input
                 className={styles.input}
                 type="number"
-                min={0}
-                max={21}
-                value={postFrequencyPerWeek}
-                onChange={(event) => setPostFrequencyPerWeek(Number(event.target.value))}
+                min={HARDCODED_POSTS_PER_WEEK}
+                max={HARDCODED_POSTS_PER_WEEK}
+                value={HARDCODED_POSTS_PER_WEEK}
+                disabled
               />
             </label>
             <label className={styles.field}>
@@ -639,6 +687,54 @@ export default function ClientOrchestrationSettingsPage() {
                 <option value="enabled">enabled</option>
                 <option value="disabled">disabled</option>
               </select>
+            </label>
+          </div>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Review Request Daily Cap</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={1}
+                max={400}
+                value={reviewRequestDailyCap}
+                onChange={(event) => setReviewRequestDailyCap(Number(event.target.value))}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Review Request Cooldown (minutes)</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={5}
+                max={720}
+                value={reviewRequestCooldownMinutes}
+                onChange={(event) => setReviewRequestCooldownMinutes(Number(event.target.value))}
+              />
+            </label>
+          </div>
+          <div className={styles.split}>
+            <label className={styles.field}>
+              <span className={styles.label}>Review Request Delay (minutes)</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={0}
+                max={720}
+                value={reviewRequestDelayMinutes}
+                onChange={(event) => setReviewRequestDelayMinutes(Number(event.target.value))}
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.label}>Review Request Jitter Max (minutes)</span>
+              <input
+                className={styles.input}
+                type="number"
+                min={0}
+                max={240}
+                value={reviewRequestJitterMaxMinutes}
+                onChange={(event) => setReviewRequestJitterMaxMinutes(Number(event.target.value))}
+              />
             </label>
           </div>
           <div className={styles.split}>

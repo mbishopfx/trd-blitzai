@@ -48,6 +48,26 @@ function parseSitemapEntries(xml: string): string[] {
     .filter(Boolean);
 }
 
+function decodeXmlEntity(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'");
+}
+
+function normalizeHttpUrl(value: string): string | null {
+  const normalized = normalizeUrl(value);
+  if (!normalized) {
+    return null;
+  }
+  if (!normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+    return null;
+  }
+  return normalized;
+}
+
 async function fetchText(url: string, timeoutMs = 12000): Promise<{ ok: boolean; status: number; body: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -174,3 +194,87 @@ export async function discoverSitemapForWebsite(websiteUrl: string): Promise<Sit
   };
 }
 
+export interface SitemapUrlListResult {
+  sitemapUrl: string;
+  urls: string[];
+  crawledSitemaps: string[];
+  warnings: string[];
+}
+
+export async function listUrlsFromSitemap(
+  sitemapUrl: string,
+  options?: {
+    maxUrls?: number;
+    maxDepth?: number;
+  }
+): Promise<SitemapUrlListResult> {
+  const normalizedSitemapUrl = normalizeHttpUrl(sitemapUrl);
+  if (!normalizedSitemapUrl) {
+    throw new Error("Invalid sitemap URL");
+  }
+
+  const maxUrls = Math.max(1, Math.min(options?.maxUrls ?? 500, 2000));
+  const maxDepth = Math.max(0, Math.min(options?.maxDepth ?? 4, 8));
+  const visited = new Set<string>();
+  const crawledSitemaps: string[] = [];
+  const urls = new Set<string>();
+  const warnings: string[] = [];
+
+  const crawl = async (url: string, depth: number): Promise<void> => {
+    if (visited.has(url) || urls.size >= maxUrls) {
+      return;
+    }
+    if (depth > maxDepth) {
+      warnings.push(`Max sitemap depth reached while crawling ${url}`);
+      return;
+    }
+    visited.add(url);
+    crawledSitemaps.push(url);
+
+    const response = await fetchText(url, 12000).catch(() => ({ ok: false, status: 0, body: "" }));
+    if (!response.ok || !response.body) {
+      warnings.push(`Failed to fetch sitemap ${url} (status: ${response.status || "n/a"})`);
+      return;
+    }
+
+    const body = response.body;
+    const locEntries = parseSitemapEntries(body).map((entry) => normalizeHttpUrl(decodeXmlEntity(entry))).filter(Boolean) as string[];
+    if (!locEntries.length) {
+      return;
+    }
+
+    const lowerBody = body.toLowerCase();
+    const isSitemapIndex = lowerBody.includes("<sitemapindex");
+    const isUrlSet = lowerBody.includes("<urlset");
+
+    if (isSitemapIndex && !isUrlSet) {
+      for (const entry of locEntries) {
+        if (urls.size >= maxUrls) {
+          break;
+        }
+        await crawl(entry, depth + 1);
+      }
+      return;
+    }
+
+    for (const entry of locEntries) {
+      if (urls.size >= maxUrls) {
+        break;
+      }
+      if (entry.endsWith(".xml") && depth < maxDepth && lowerBody.includes("<sitemapindex")) {
+        await crawl(entry, depth + 1);
+        continue;
+      }
+      urls.add(entry);
+    }
+  };
+
+  await crawl(normalizedSitemapUrl, 0);
+
+  return {
+    sitemapUrl: normalizedSitemapUrl,
+    urls: [...urls],
+    crawledSitemaps,
+    warnings
+  };
+}

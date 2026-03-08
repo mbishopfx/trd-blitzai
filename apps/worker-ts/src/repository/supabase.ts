@@ -615,6 +615,7 @@ export class SupabaseBlitzRepository implements BlitzRunRepository {
       {
         organization_id: input.organizationId,
         client_id: input.clientId,
+        run_id: input.runId ?? null,
         location_id: input.locationId,
         review_id: input.reviewId,
         review_rating: input.reviewRating,

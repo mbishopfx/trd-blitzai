@@ -13,6 +13,10 @@ interface Params {
   params: { clientId: string };
 }
 
+const HARDCODED_POSTS_PER_DAY = 2;
+const HARDCODED_POST_DAYS_PER_WEEK = 3;
+const HARDCODED_POSTS_PER_WEEK = HARDCODED_POSTS_PER_DAY * HARDCODED_POST_DAYS_PER_WEEK;
+
 export async function GET(request: NextRequest, { params }: Params) {
   const ctx = await getRequestContext(request);
   if (isSupabaseConfigured()) {
@@ -68,11 +72,20 @@ export async function POST(request: NextRequest, { params }: Params) {
     sitemapUrl: parsed.data.sitemapUrl,
     defaultPostUrl: parsed.data.defaultPostUrl,
     reviewReplyStyle: parsed.data.reviewReplyStyle,
-    postFrequencyPerWeek: parsed.data.postFrequencyPerWeek,
+    postFrequencyPerWeek: HARDCODED_POSTS_PER_WEEK,
     postWordCountMin: parsed.data.postWordCountMin,
     postWordCountMax: parsed.data.postWordCountMax,
     eeatStructuredSnippetEnabled: parsed.data.eeatStructuredSnippetEnabled,
-    metadata: parsed.data.metadata
+    metadata: {
+      ...parsed.data.metadata,
+      postingCadence: {
+        postsPerDay: HARDCODED_POSTS_PER_DAY,
+        postingDaysPerWeek: HARDCODED_POST_DAYS_PER_WEEK,
+        postsPerWeek: HARDCODED_POSTS_PER_WEEK,
+        locked: true,
+        source: "platform_hardcoded_rule"
+      }
+    }
   });
 
   return ok({ settings });

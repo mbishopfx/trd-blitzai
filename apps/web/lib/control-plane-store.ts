@@ -1273,6 +1273,63 @@ export async function listClientContentArtifacts(
   return (data ?? []).map((row) => mapContentArtifactRow(row as Record<string, unknown>));
 }
 
+export async function createContentArtifact(input: {
+  organizationId: string;
+  clientId: string;
+  runId?: string | null;
+  phase: BlitzPhase;
+  channel: string;
+  title?: string | null;
+  body: string;
+  metadata?: Record<string, unknown>;
+  status?: ContentArtifact["status"];
+  scheduledFor?: string | null;
+  publishedAt?: string | null;
+}): Promise<ContentArtifact> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const artifact: ContentArtifact = {
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      clientId: input.clientId,
+      runId: input.runId ?? null,
+      phase: input.phase,
+      channel: input.channel,
+      title: input.title ?? null,
+      body: input.body,
+      metadata: input.metadata ?? {},
+      status: input.status ?? "draft",
+      scheduledFor: input.scheduledFor ?? null,
+      publishedAt: input.publishedAt ?? null,
+      createdAt: nowIso()
+    };
+    store.contentArtifacts.set(artifact.id, artifact);
+    return artifact;
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("content_artifacts")
+    .insert({
+      organization_id: input.organizationId,
+      client_id: input.clientId,
+      run_id: input.runId ?? null,
+      phase: input.phase,
+      channel: input.channel,
+      title: input.title ?? null,
+      body: input.body,
+      metadata: input.metadata ?? {},
+      status: input.status ?? "draft",
+      scheduled_for: input.scheduledFor ?? null,
+      published_at: input.publishedAt ?? null
+    })
+    .select("id,organization_id,client_id,run_id,phase,channel,title,body,metadata,status,scheduled_for,published_at,created_at")
+    .single();
+  if (error || !data) {
+    throw new Error(`Failed to create content artifact: ${error?.message ?? "unknown error"}`);
+  }
+  return mapContentArtifactRow(data as Record<string, unknown>);
+}
+
 export async function updateContentArtifact(
   artifactId: string,
   patch: {
