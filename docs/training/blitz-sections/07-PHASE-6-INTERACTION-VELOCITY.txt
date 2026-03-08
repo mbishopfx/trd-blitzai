@@ -1,0 +1,18 @@
+07 - Phase 6: Interaction Velocity Booster
+
+Goal
+Drive higher interaction intent and keep profile operations tuned.
+
+What the phase does
+- Runs interaction-focused optimization action (hours/CTA timing objective).
+- Feeds operational adjustments through policy engine before execution.
+- Supports measurable loops with run reports and attribution surfaces.
+
+Key benefit
+- Better alignment between profile activity and user action pathways.
+- More consistent operator cadence for optimization follow-ups.
+
+Operator controls
+- Policy caps and escalation thresholds.
+- Manual approval for risky changes via Actions Needed.
+- Per-client orchestration settings.

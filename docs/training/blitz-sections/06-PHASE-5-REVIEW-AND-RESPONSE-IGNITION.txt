@@ -1,0 +1,24 @@
+06 - Phase 5: Review & Response Ignition
+
+Goal
+Improve review velocity operations and maintain fast, contextual owner response behavior.
+
+Part A: Review replies on GBP
+- Pulls live GBP reviews.
+- Auto-replies only to reviews that do not already have an owner reply.
+- Prevents duplicate reply posting by checking existing reviewReply/comment first.
+- Can escalate low-rating/sensitive cases to manual queue depending on policy.
+
+Part B: Review request pipeline (CRM trigger style)
+- Receives webhook payload with customer/service context.
+- Queues review request artifacts (SMS/email) with caps, cooldowns, and jitter.
+- Dispatch worker sends via Twilio (SMS) or SendGrid (email).
+
+Key benefit
+- Faster response coverage and cleaner trust operations.
+- Controlled pacing for outbound review asks.
+
+Operator controls
+- Channel selection (SMS/email).
+- Daily cap, cooldown, jitter in client metadata.
+- Manual queue for sensitive cases.

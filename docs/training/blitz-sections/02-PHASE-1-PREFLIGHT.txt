@@ -1,0 +1,21 @@
+02 - Phase 1: Preflight
+
+Goal
+Validate environment before any profile-changing action is executed.
+
+What the phase does
+- Checks integration health and token freshness.
+- Validates policy constraints and action caps.
+- Verifies run readiness for downstream phases.
+
+Why it matters
+- Prevents failed runs caused by expired auth or quota conditions.
+- Reduces unsafe or out-of-policy action attempts.
+
+Operator checklist
+- Confirm client has active GBP integration.
+- Confirm policy settings are configured.
+- Confirm no open blockers in Actions Needed.
+
+Success signal
+Run proceeds into completeness/media/content phases without hard-stop errors.

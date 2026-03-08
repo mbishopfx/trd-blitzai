@@ -1,0 +1,27 @@
+01 - Platform At A Glance
+
+What Blitz does for us
+Blitz is an agency execution platform that runs Google Business Profile optimization workflows at scale.
+It does not only recommend changes. It runs approved actions, tracks them, and logs outcomes.
+
+What is automated right now
+- GBP OAuth connect and client/location seeding into your org.
+- Blitz run orchestration across all major phases.
+- Content generation and posting pipeline with TinyURL + QR-on-image logic.
+- Media queueing and upload workflows.
+- Review reply automation against live GBP reviews.
+- Review request dispatch queue (SMS/email) using Twilio/SendGrid.
+- Policy controls, action logs, and Actions Needed escalation workflow.
+- Attribution connectors and reporting surfaces for GBP + GA4 + Ads.
+
+What operators still control
+- Which clients are active in platform.
+- Tone/objectives/system instructions per client.
+- Photo buckets and allowed assets.
+- Approval for risky actions via Actions Needed queue.
+- Manual overrides for sensitive review cases.
+
+Main team value
+- Faster execution across many clients.
+- Consistent SOP and audit trails.
+- Better velocity on freshness/reviews/content signals.

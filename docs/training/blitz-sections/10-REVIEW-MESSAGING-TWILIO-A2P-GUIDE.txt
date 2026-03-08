@@ -1,0 +1,30 @@
+10 - Review Messaging: Twilio + A2P Guide
+
+What the review generator does in this platform
+1) Receives CRM-style event payload (job done/paid or manual trigger).
+2) Builds personalized review request message from customer + service context.
+3) Queues request as content artifact with pacing controls.
+4) Worker dispatches:
+   - SMS via Twilio API
+   - Email via SendGrid API
+5) Logs delivery status to artifacts for operator review.
+
+So yes: it sends a real outbound text/email to a customer when enabled and configured.
+
+Do we need one A2P campaign per client?
+Short answer: yes, usually per client brand/use case.
+
+Recommended agency setup
+- One Twilio master account for agency governance.
+- Separate Twilio subaccount per client for isolation and reporting.
+- Register each client as its own brand/customer profile.
+- Register campaign(s) per client use case (review requests, reminders, etc.).
+- Attach client numbers/messaging service to the correct client campaign.
+
+What NOT to do
+- Do not run unrelated client brands through one shared campaign identity.
+- Do not mix client traffic in a way that breaks brand/use-case mapping.
+
+Operational note
+Current Blitz env vars (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`) are global.
+For true per-client Twilio routing, move provider credentials/sender mapping into per-client integration settings.

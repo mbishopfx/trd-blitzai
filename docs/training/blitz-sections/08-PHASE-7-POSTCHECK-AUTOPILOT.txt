@@ -1,0 +1,18 @@
+08 - Phase 7: Postcheck + Autopilot
+
+Goal
+Close run cleanly, measure deltas, and keep future automation in motion.
+
+What the phase does
+- Performs post-run snapshot/report workflow.
+- Persists run/action outcomes for audit and rollback visibility.
+- Leaves scheduled/autopilot artifacts for ongoing cadence.
+
+Key benefit
+- Every run has traceability.
+- Team can review exactly what happened and what changed.
+
+Operator controls
+- Run monitor and action logs.
+- Rollback actions where supported.
+- Pause/adjust future automation through client settings and policies.

@@ -1,0 +1,22 @@
+TRD Blitz AI - Blitz Sections Training Pack
+
+Purpose
+This folder is the team training curriculum for Blitz Agent operations.
+Use it to train account managers, operators, and analysts on exactly what each Blitz section does.
+
+Recommended training order
+1) 01-PLATFORM-AT-A-GLANCE.txt
+2) 02-PHASE-1-PREFLIGHT.txt
+3) 03-PHASE-2-COMPLETENESS.txt
+4) 04-PHASE-3-VISUAL-MEDIA-FLOOD.txt
+5) 05-PHASE-4-GEO-CONTENT-QA.txt
+6) 06-PHASE-5-REVIEW-AND-RESPONSE-IGNITION.txt
+7) 07-PHASE-6-INTERACTION-VELOCITY.txt
+8) 08-PHASE-7-POSTCHECK-AUTOPILOT.txt
+9) 09-CLIENT-WORKSPACE-TAB-GUIDE.txt
+10) 10-REVIEW-MESSAGING-TWILIO-A2P-GUIDE.txt
+
+How to use in team training
+- Read one section per module.
+- Demo the matching page in the app immediately after each section.
+- End each module by assigning one operator task and one analyst KPI review task.

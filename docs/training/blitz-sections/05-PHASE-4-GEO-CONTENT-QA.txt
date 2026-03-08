@@ -1,0 +1,25 @@
+05 - Phase 4: GEO Content Barrage + Q&A Seeding
+
+Goal
+Publish structured, intent-aligned local content that improves retrieval and engagement.
+
+What the phase does
+- Generates GBP post copy from sitemap/page context + client instructions.
+- Enforces duplicate avoidance across scheduled content artifacts.
+- Schedules cadence with hardcoded frequency rules where configured.
+- Produces style-consistent post summaries and CTA structure.
+- Supports Q&A-oriented content operations in dedicated UI.
+
+Content quality controls
+- Human-readable post structure.
+- Title/topic sanitization to prevent raw scrape text leaks.
+- TinyURL CTA and QR-on-image workflow for post assets.
+
+Key benefit
+- Reliable publishing cadence without duplicate spam.
+- Better semantic alignment between page topic, post copy, and CTA destination.
+
+Operator controls
+- Single post or Spawn 3 via Post Tool.
+- Tone/system message overrides.
+- URL selection from discovered sitemap pages.

@@ -1,0 +1,24 @@
+04 - Phase 3: Visual & Media Flood
+
+Goal
+Turn client media into optimized GBP-ready assets and publish in safe cadence.
+
+What the phase does
+- Pulls approved assets from client bucket.
+- Runs media processing pipeline for derivatives and metadata.
+- Schedules/uploads media in throttled batches.
+- Avoids random image use when no approved assets exist.
+
+Current posting-asset behavior
+- Uses approved client assets only.
+- Supports QR overlay generation for post assets.
+- Uses URL shortening (TinyURL) before final post CTA link.
+
+Key benefit
+- Stronger visual freshness and asset quality.
+- Better consistency between post copy, image, and destination URL.
+
+Operator controls
+- Per-client bucket management.
+- Allow/deny asset selection via client settings.
+- Content frequency and scheduling controls.

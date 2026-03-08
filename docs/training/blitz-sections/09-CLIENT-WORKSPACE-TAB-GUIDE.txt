@@ -1,0 +1,34 @@
+09 - Client Workspace Tab Guide
+
+Overview tab
+- Health summary, integration state, and quick controls.
+
+Blitz Worker tab
+- Launch runs.
+- Monitor phase progress and action outcomes.
+
+Post Tool tab
+- Queue single or Spawn 3 posts.
+- Choose sitemap URLs, tone/system instruction, and push now.
+
+Content Ops tab
+- Manage content artifacts and schedules.
+- Review status: draft/scheduled/published/failed.
+
+Q&A Ops tab
+- Manage Q&A-related content packs and approvals.
+
+Review Engine tab
+- Queue test/operational review requests.
+- Track SMS/email request artifacts and status.
+
+Actions Needed tab
+- Approve/reject high-risk recommendations.
+- Prevent unsafe auto-execution.
+
+Reviews tab
+- Pull live GBP reviews.
+- Run auto-reply or manual reply workflow.
+
+Orchestration tab
+- Configure tone, objectives, sitemap, post settings, and media selection.

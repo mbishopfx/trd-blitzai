@@ -1,0 +1,24 @@
+03 - Phase 2: Completeness Overhaul
+
+Goal
+Close profile data gaps and improve semantic coverage for local intent.
+
+What the phase does
+- Runs competitor benchmark and field-gap matrix logic.
+- Applies profile/category/service/attribute/hour recommendations.
+- Uses AI-assisted optimization prompts for cleaner, declarative profile copy.
+- Routes high-risk updates into Actions Needed if policy requires approval.
+
+Key benefit
+- Higher profile completeness and cleaner structured signals.
+- Better relevance matching for high-intent local queries.
+
+Operator controls
+- Policy gates for risk tiers.
+- Approval workflow for sensitive edits.
+- Manual accept/reject in Actions Needed.
+
+Success signal
+- More fields populated correctly.
+- Fewer profile gaps in run report.
+- No policy violations or suspension-risk behavior.
