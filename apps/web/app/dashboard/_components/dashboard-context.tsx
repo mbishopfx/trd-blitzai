@@ -222,11 +222,16 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     if (!isHydrated) {
       return;
     }
+    if (supabaseEnabled && !session?.access_token && !apiKey.trim()) {
+      setOrganizations([]);
+      setSelectedOrgId("");
+      return;
+    }
 
     void reloadOrganizations().catch(() => {
       // Surface errors on page-level actions to avoid noisy shell-level toast logic.
     });
-  }, [isHydrated, reloadOrganizations]);
+  }, [apiKey, isHydrated, reloadOrganizations, session?.access_token, supabaseEnabled]);
 
   const signIn = useCallback(
     async (email: string, password: string): Promise<void> => {

@@ -94,7 +94,7 @@ async function authorize(
   const ctx = await getRequestContext(request);
   if (isSupabaseConfigured()) {
     if (!ctx.isAuthenticated) {
-      return fail("Unauthorized", 401);
+      return fail("Unauthorized. Session expired. Sign in again from the dashboard header.", 401);
     }
     if (!hasRole(ctx, minimumRole)) {
       return fail("Forbidden", 403);
@@ -332,29 +332,57 @@ export async function POST(request: NextRequest, { params }: Params) {
       limit: 300
     });
     const duplicateProtectionSet = new Set<string>();
-    const now = Date.now();
+    const queuedByLandingUrl = new Map<string, (typeof candidateArtifacts)[number]>();
     for (const artifact of candidateArtifacts) {
-      const ageMs = now - new Date(artifact.createdAt).getTime();
-      const shouldProtect =
-        artifact.status === "draft" ||
-        artifact.status === "scheduled" ||
-        (artifact.status === "published" && Number.isFinite(ageMs) && ageMs <= 14 * 24 * 60 * 60 * 1000);
-      if (!shouldProtect) {
+      if (artifact.status !== "draft" && artifact.status !== "scheduled") {
         continue;
       }
       const existingUrl = parseLandingUrlFromArtifactMetadata(artifact.metadata);
       if (existingUrl) {
-        duplicateProtectionSet.add(existingUrl.toLowerCase());
+        const key = existingUrl.toLowerCase();
+        duplicateProtectionSet.add(key);
+        if (!queuedByLandingUrl.has(key)) {
+          queuedByLandingUrl.set(key, artifact);
+        }
       }
     }
 
     const conflicting = normalizedUniqueLandingUrls.filter((url) => duplicateProtectionSet.has(url.toLowerCase()));
     if (conflicting.length) {
-      return fail(
-        "One or more selected URLs are already in a queued/recent post cycle. Pick different URLs to avoid duplicates.",
-        409,
-        { conflictingUrls: conflicting }
-      );
+      type ExistingQueuedEntry = {
+        id: string;
+        scheduledFor: string;
+        landingUrl: string;
+        mediaAssetId: string | null;
+        status: "draft" | "scheduled" | "published" | "failed";
+      };
+      const existingQueued = conflicting
+        .map((url) => {
+          const queued = queuedByLandingUrl.get(url.toLowerCase());
+          if (!queued) {
+            return null;
+          }
+          return {
+            id: queued.id,
+            scheduledFor: queued.scheduledFor ?? new Date().toISOString(),
+            landingUrl: url,
+            mediaAssetId:
+              typeof (queued.metadata as Record<string, unknown>).mediaAssetId === "string"
+                ? String((queued.metadata as Record<string, unknown>).mediaAssetId)
+                : null,
+            status: queued.status as ExistingQueuedEntry["status"]
+          };
+        })
+        .filter((entry): entry is ExistingQueuedEntry => entry !== null);
+
+      return ok({
+        scheduledCount: 0,
+        mode,
+        created: existingQueued,
+        warnings: [
+          "Selected URLs are already queued. Existing queued artifacts were returned so you can use Push Now instead of creating duplicates."
+        ]
+      });
     }
 
     const toneOverride = typeof payload.toneOverride === "string" && payload.toneOverride.trim()
