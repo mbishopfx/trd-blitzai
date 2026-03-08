@@ -994,6 +994,68 @@ function mediaUrlFromAsset(asset: ClientMediaAssetRecord): string | null {
   return candidates[0] ?? null;
 }
 
+function cleanDisplayText(value: string, fallback: string): string {
+  const normalized = normalizeText(value)
+    .replace(/\bhttps?:\/\/\S+/gi, " ")
+    .replace(/\b[a-z0-9.-]+\.(com|net|org|io|co|biz|info)\b/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return normalized || fallback;
+}
+
+function extractCityFromSignals(signals: string[]): string | null {
+  for (const signal of signals) {
+    const normalized = normalizeText(signal);
+    const match = normalized.match(/\b([A-Za-z][A-Za-z\s]+,\s?[A-Z]{2})\b/);
+    if (match?.[1]) {
+      return cleanDisplayText(match[1], "").slice(0, 60) || null;
+    }
+  }
+  return null;
+}
+
+function buildStyledGbpSnippet(input: {
+  locationTitle: string;
+  topicLabel: string;
+  shortUrl: string;
+  ctaUrl?: string | null;
+  localTrendSignals: string[];
+  addressLine?: string | null;
+}): string {
+  const locationTitle = cleanDisplayText(input.locationTitle, "Our team").slice(0, 90);
+  const topicLabel = cleanDisplayText(input.topicLabel, "Furniture Repair and Refinishing").slice(0, 110);
+  const cityState = extractCityFromSignals(input.localTrendSignals);
+  const ctaTarget = input.ctaUrl ?? input.shortUrl;
+  const areaLine = cityState ? `${topicLabel} in ${cityState}` : topicLabel;
+  const hashtags = cityState && cityState.toLowerCase().includes("new york")
+    ? "#FurnitureRefinishing #NYCRefinishing #FurnitureRepair #CustomRepairs"
+    : "#FurnitureRefinishing #FurnitureRepair #CustomRepairs #WoodRestoration";
+
+  const lines = [
+    `🔧 ${areaLine}? ${locationTitle} is here to help.`,
+    "",
+    `At ${locationTitle}, we bring worn or damaged furniture back to life with hands-on repair and refinishing craftsmanship.`,
+    "",
+    "💰 Cost-effective restoration that helps you avoid full replacement costs.",
+    "🏆 Skilled craftsmanship for repairs, touch-ups, veneer work, and finish correction.",
+    "🛋️ Personalized service based on your style, piece condition, and timeline.",
+    "✅ Durable finish protection designed for daily use in real homes and businesses.",
+    "",
+    "Let’s restore your furniture the right way. Reach out today and see the difference quality refinishing can make.",
+    "",
+    hashtags,
+    "",
+    "Click here to learn more:",
+    ctaTarget
+  ];
+
+  if (input.addressLine) {
+    lines.push("", `📍 ${cleanDisplayText(input.addressLine, "").slice(0, 120)}`);
+  }
+
+  return lines.join("\n").slice(0, 1450);
+}
+
 function buildEeatLongFormPost(input: {
   locationTitle: string;
   objective: string;
@@ -1089,9 +1151,13 @@ function buildEeatLongFormPost(input: {
     }
   }
 
-  const summaryHeader = `${input.archetype.label}: ${input.locationTitle}`;
-  const snippetRaw = `${summaryHeader}. ${topicLabel}. Trend focus: ${trendLine}. Search intent: ${searchIntentLine}. ${metaBlurb} Learn more: ${ctaTarget}`.trim();
-  const snippet = snippetRaw.slice(0, 1450);
+  const snippet = buildStyledGbpSnippet({
+    locationTitle: input.locationTitle,
+    topicLabel,
+    shortUrl: input.shortUrl,
+    ctaUrl: ctaTarget,
+    localTrendSignals: input.localTrendSignals
+  });
 
   return {
     title,
@@ -1921,12 +1987,14 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       "- Start longForm with a clear H1-style heading relevant to local urgency or local opportunity.",
       "- Include exactly one compact bullet list with 3 factual bullets.",
       "- Include one compact bullet list under a section named Structured Snippet.",
-      "- The snippet must use short factual chunks, not fluffy narrative.",
+      "- The snippet must read like a complete social post, not a data dump.",
+      "- Use short, human-readable sections and benefit bullets in snippet output.",
+      "- Never output raw scraped fragments, semicolon-separated token dumps, or malformed domain text.",
       "- Keep tone professional, local-expert, and conversational.",
       "- Anchor the post semantically to the landing page topic and user intent.",
       `- Treat this as a ${input.archetype.label.toLowerCase()} style GBP post.`,
       "- Include a clear conversion CTA with the short URL.",
-      "- Do not use emojis.",
+      "- Limited symbols/emojis are allowed for readability (max 1 per line).",
       "",
       "Context:",
       `- Business: ${input.locationTitle}`,
@@ -2081,9 +2149,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       const parsed = parseJsonObjectFromText(rawText);
       const modelTitle = parsed && typeof parsed.title === "string" ? parsed.title.trim() : "";
       const modelLongForm = parsed && typeof parsed.longForm === "string" ? parsed.longForm.trim() : "";
-      const modelSnippet = parsed && typeof parsed.snippet === "string" ? parsed.snippet.trim() : "";
-
-      if (!modelTitle || !modelLongForm || !modelSnippet) {
+      if (!modelTitle || !modelLongForm) {
         return {
           title: fallback.title,
           longForm: fallback.longForm,
@@ -2102,10 +2168,17 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         longForm = truncateToMaxWords(longForm, input.wordRange.max);
       }
 
-      let snippet = modelSnippet.slice(0, 1450);
-      if (!snippet.includes(input.shortUrl)) {
-        snippet = `${snippet} Learn more: ${input.shortUrl}`.slice(0, 1450);
-      }
+      const topicLabel =
+        input.pageContext.h1 ??
+        input.pageContext.pageTitle ??
+        toSentenceCase(summarizeUrlPath(input.landingUrl));
+      const snippet = buildStyledGbpSnippet({
+        locationTitle: input.locationTitle,
+        topicLabel,
+        shortUrl: input.shortUrl,
+        ctaUrl: input.ctaUrl,
+        localTrendSignals: input.localTrendSignals
+      });
 
       return {
         title: modelTitle.slice(0, 110),

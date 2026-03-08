@@ -105,7 +105,7 @@ export function startScheduledContentDispatcher(input: {
         }
 
         const run: BlitzRun = {
-          id: `scheduled-artifact-${artifact.id}`,
+          id: randomUUID(),
           organizationId: artifact.organizationId,
           clientId: artifact.clientId,
           status: "running",
@@ -115,7 +115,8 @@ export function startScheduledContentDispatcher(input: {
           createdAt: nowIso(),
           policySnapshot: {
             source: "scheduled-content-dispatcher",
-            artifactId: artifact.id
+            artifactId: artifact.id,
+            syntheticRun: true
           },
           summary: null
         };
