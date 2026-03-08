@@ -22,6 +22,8 @@ interface SitemapPayload {
     bytes: number | null;
   }>;
   queuedLandingUrls: string[];
+  dueScheduledCount: number;
+  scheduledDispatcherExpected: boolean;
   warnings: string[];
 }
 
@@ -36,6 +38,20 @@ interface QueueResponse {
     status: string;
   }>;
   warnings: string[];
+}
+
+interface PushNowResponse {
+  action: "push_now";
+  pushedCount: number;
+  updated: Array<{
+    id: string;
+    status: string;
+    scheduledFor: string | null;
+  }>;
+  skipped: Array<{
+    id: string;
+    reason: string;
+  }>;
 }
 
 function normalizeHttpUrl(value: string): string | null {
@@ -71,6 +87,8 @@ export default function ClientPostToolPage() {
   const [defaultPostUrl, setDefaultPostUrl] = useState<string | null>(null);
   const [sitemapUrls, setSitemapUrls] = useState<string[]>([]);
   const [queuedLandingUrls, setQueuedLandingUrls] = useState<string[]>([]);
+  const [dueScheduledCount, setDueScheduledCount] = useState(0);
+  const [scheduledDispatcherExpected, setScheduledDispatcherExpected] = useState(true);
   const [allowedAssets, setAllowedAssets] = useState<SitemapPayload["allowedAssets"]>([]);
   const [singleUrl, setSingleUrl] = useState("");
   const [spawn3Selection, setSpawn3Selection] = useState<string[]>([]);
@@ -92,6 +110,8 @@ export default function ClientPostToolPage() {
         setDefaultPostUrl(payload.defaultPostUrl);
         setSitemapUrls(payload.sitemapUrls);
         setQueuedLandingUrls(payload.queuedLandingUrls);
+        setDueScheduledCount(payload.dueScheduledCount);
+        setScheduledDispatcherExpected(payload.scheduledDispatcherExpected);
         setAllowedAssets(payload.allowedAssets);
         setWarnings(payload.warnings);
 
@@ -156,6 +176,30 @@ export default function ClientPostToolPage() {
     }
   };
 
+  const pushNow = async (artifactIds: string[]) => {
+    if (!artifactIds.length) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const payload = await request<PushNowResponse>(`/api/v1/clients/${clientId}/post-tool`, {
+        method: "POST",
+        body: {
+          action: "push_now",
+          artifactIds
+        }
+      });
+      setStatus(`Pushed ${payload.pushedCount} artifact(s) for immediate dispatch.`);
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <section className={styles.hero}>
@@ -167,8 +211,14 @@ export default function ClientPostToolPage() {
         <div className={styles.kpiRow}>
           <span className={styles.badge}>Sitemap URLs {sitemapUrls.length}</span>
           <span className={styles.badge}>Queued URLs {queuedLandingUrls.length}</span>
+          <span className={styles.badge}>Due Now {dueScheduledCount}</span>
           <span className={styles.badge}>Allowed Assets {allowedAssets.length}</span>
         </div>
+        {scheduledDispatcherExpected ? (
+          <span className={`${styles.badge} ${styles.statusIdle}`}>
+            Posts dispatch automatically from the Railway worker scheduler. Use Push Now to force immediate dispatch eligibility.
+          </span>
+        ) : null}
         {status ? <span className={`${styles.badge} ${styles.statusActive}`}>{status}</span> : null}
         {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
       </section>
@@ -255,6 +305,16 @@ export default function ClientPostToolPage() {
               <button type="button" className={styles.buttonPrimary} onClick={() => void submit()} disabled={busy}>
                 Queue Post Tool Run
               </button>
+              {submitPreview?.created.length ? (
+                <button
+                  type="button"
+                  className={styles.buttonGhost}
+                  onClick={() => void pushNow(submitPreview.created.map((entry) => entry.id))}
+                  disabled={busy}
+                >
+                  Push Latest Now
+                </button>
+              ) : null}
             </div>
           </div>
         </article>
@@ -309,7 +369,19 @@ export default function ClientPostToolPage() {
                         <td>{item.landingUrl}</td>
                         <td>{formatDate(item.scheduledFor)}</td>
                         <td>{item.mediaAssetId ?? "text-only"}</td>
-                        <td>{item.status}</td>
+                        <td>
+                          <div className={styles.inlineActions}>
+                            <span>{item.status}</span>
+                            <button
+                              type="button"
+                              className={styles.buttonGhost}
+                              onClick={() => void pushNow([item.id])}
+                              disabled={busy}
+                            >
+                              Push Now
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

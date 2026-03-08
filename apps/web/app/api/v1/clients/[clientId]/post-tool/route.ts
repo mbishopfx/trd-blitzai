@@ -5,7 +5,8 @@ import {
   getClientById,
   getClientOrchestrationSettings,
   listClientContentArtifacts,
-  listClientMediaAssets
+  listClientMediaAssets,
+  updateContentArtifact
 } from "@/lib/control-plane-store";
 import { fail, ok } from "@/lib/http";
 import { discoverSitemapForWebsite, listUrlsFromSitemap } from "@/lib/sitemap-discovery";
@@ -18,10 +19,12 @@ interface Params {
 type PostToolMode = "single" | "spawn3";
 
 interface PostToolPayload {
+  action?: unknown;
   mode?: unknown;
   landingUrls?: unknown;
   toneOverride?: unknown;
   systemMessage?: unknown;
+  artifactIds?: unknown;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -204,6 +207,15 @@ export async function GET(request: NextRequest, { params }: Params) {
     .filter((artifact) => artifact.status === "draft" || artifact.status === "scheduled")
     .map((artifact) => parseLandingUrlFromArtifactMetadata(artifact.metadata))
     .filter((entry): entry is string => Boolean(entry));
+  const dueScheduledCount = existingArtifacts.filter((artifact) => {
+    if (artifact.status !== "scheduled") {
+      return false;
+    }
+    if (!artifact.scheduledFor) {
+      return true;
+    }
+    return new Date(artifact.scheduledFor).getTime() <= Date.now();
+  }).length;
 
   return ok({
     modeDefaults: {
@@ -214,6 +226,8 @@ export async function GET(request: NextRequest, { params }: Params) {
     sitemapUrls: [...new Set(urls)].slice(0, 500),
     allowedAssets,
     queuedLandingUrls,
+    dueScheduledCount,
+    scheduledDispatcherExpected: true,
     warnings
   });
 }
@@ -228,6 +242,67 @@ export async function POST(request: NextRequest, { params }: Params) {
     const payload = (await request.json().catch(() => null)) as PostToolPayload | null;
     if (!payload) {
       return fail("Invalid post tool payload", 400);
+    }
+    const action = typeof payload.action === "string" ? payload.action.trim().toLowerCase() : "queue";
+
+    if (action === "push_now") {
+      const artifactIds = toStringArray(payload.artifactIds);
+      if (!artifactIds.length) {
+        return fail("artifactIds are required for push_now", 400);
+      }
+
+      const candidates = await listClientContentArtifacts(params.clientId, {
+        channel: "gbp",
+        phase: "content",
+        status: "all",
+        limit: 500
+      });
+      const index = new Map(candidates.map((artifact) => [artifact.id, artifact]));
+      const nowIso = new Date().toISOString();
+      const updated: Array<{ id: string; status: string; scheduledFor: string | null }> = [];
+      const skipped: Array<{ id: string; reason: string }> = [];
+
+      for (const artifactId of artifactIds) {
+        const artifact = index.get(artifactId);
+        if (!artifact) {
+          skipped.push({ id: artifactId, reason: "not_found" });
+          continue;
+        }
+        if (artifact.status === "published") {
+          skipped.push({ id: artifactId, reason: "already_published" });
+          continue;
+        }
+        if (artifact.status === "failed") {
+          skipped.push({ id: artifactId, reason: "failed_status" });
+          continue;
+        }
+        const nextMetadata = {
+          ...artifact.metadata,
+          pushedNowAt: nowIso,
+          pushedNowVia: "isolated_post_tool"
+        };
+        const next = await updateContentArtifact(artifact.id, {
+          status: "scheduled",
+          scheduledFor: nowIso,
+          metadata: nextMetadata
+        });
+        if (!next) {
+          skipped.push({ id: artifactId, reason: "update_failed" });
+          continue;
+        }
+        updated.push({
+          id: next.id,
+          status: next.status,
+          scheduledFor: next.scheduledFor
+        });
+      }
+
+      return ok({
+        action: "push_now",
+        pushedCount: updated.length,
+        updated,
+        skipped
+      });
     }
 
     const mode = resolveMode(payload.mode);

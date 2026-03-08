@@ -86,7 +86,7 @@ async function main(): Promise<void> {
       executor,
       events: new LogEventPublisher()
     });
-    const scheduledDispatcherEnabled = (process.env.SCHEDULED_CONTENT_DISPATCHER_ENABLED ?? "false")
+    const scheduledDispatcherEnabled = (process.env.SCHEDULED_CONTENT_DISPATCHER_ENABLED ?? "true")
       .trim()
       .toLowerCase() === "true";
     if (scheduledDispatcherEnabled) {

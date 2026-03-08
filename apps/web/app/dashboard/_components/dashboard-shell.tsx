@@ -83,6 +83,26 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         detail: "Runs, actions, and rollback"
       },
       {
+        href: `/dashboard/clients/${clientId}/post-tool`,
+        label: "Post Tool",
+        detail: "Single post or spawn 3 with QR + TinyURL"
+      },
+      {
+        href: `/dashboard/clients/${clientId}/content`,
+        label: "Content Ops",
+        detail: "Review drafts, approvals, and schedule queue"
+      },
+      {
+        href: `/dashboard/clients/${clientId}/qna`,
+        label: "Q&A Ops",
+        detail: "Seed packs and operator validation"
+      },
+      {
+        href: `/dashboard/clients/${clientId}/review-engine`,
+        label: "Review Engine",
+        detail: "Request/reply automation and queues"
+      },
+      {
         href: `/dashboard/clients/${clientId}/actions-needed`,
         label: "Actions Needed",
         detail: "Approve or manually complete risky changes"
