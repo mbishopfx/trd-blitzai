@@ -6259,6 +6259,8 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       contentProvider: generatedCopy.provider,
       contentModel: generatedCopy.model,
       postTitle: generatedCopy.title,
+      postedSummary: summary,
+      generatedLongForm: generatedCopy.longForm,
       wordCount: wordCount(generatedCopy.longForm),
       publishedPosts: [
         {
