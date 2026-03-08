@@ -1001,6 +1001,8 @@ function cleanTopicCandidate(value: string): string {
     .replace(/\b[a-z0-9][a-z0-9-]*\.(com|net|org|io|co|biz|info|us|nyc)\b/gi, " ")
     .replace(/\b[a-z]*\d+[a-z]*\b/gi, " ")
     .replace(/\b(inc|llc|corp|ltd|co|company)\b\.?/gi, " ")
+    .replace(/\bour services?\b/gi, " ")
+    .replace(/\bhomepage\b/gi, " ")
     .replace(/[|;:]+/g, " ")
     .replace(/[^\w\s&/-]/g, " ")
     .replace(/\s{2,}/g, " ")
@@ -1062,15 +1064,29 @@ function resolvePostTopicLabel(input: {
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
 
   for (const candidate of candidates) {
-    const firstClause = normalizeText(candidate).split(/[.!?]/)[0] ?? candidate;
+    const firstClause = normalizeText(candidate).split(/[|;:,.!?]/)[0] ?? candidate;
     const cleaned = cleanTopicCandidate(firstClause);
     if (isLikelyNoisyTopic(cleaned)) {
       continue;
     }
-    return truncateChars(toSentenceCase(cleaned), 96);
+    const concise = cleaned.split(/\s+/).slice(0, 10).join(" ");
+    return truncateChars(toSentenceCase(concise), 96);
   }
 
   return fallback;
+}
+
+function sanitizePostTitle(value: string, fallback: string): string {
+  const normalized = cleanDisplayText(value, fallback)
+    .replace(/\b[a-z0-9][a-z0-9-]*\.(com|net|org|io|co|biz|info|us|nyc)\b/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const compact = normalized.split(/\s+/).slice(0, 14).join(" ").trim();
+  if (compact && !isLikelyNoisyTopic(compact)) {
+    return truncateChars(compact, 110);
+  }
+  const fallbackClean = cleanDisplayText(fallback, "Local service update");
+  return truncateChars(fallbackClean, 110);
 }
 
 function toHashtagLabel(value: string): string | null {
@@ -2294,7 +2310,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       });
 
       return {
-        title: modelTitle.slice(0, 110),
+        title: sanitizePostTitle(modelTitle, fallback.title),
         longForm,
         snippet,
         provider: "gemini",
