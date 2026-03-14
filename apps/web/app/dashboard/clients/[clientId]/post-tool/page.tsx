@@ -63,6 +63,20 @@ interface PushNowResponse {
   }>;
 }
 
+interface UnscheduleResponse {
+  action: "unschedule";
+  unscheduledCount: number;
+  updated: Array<{
+    id: string;
+    status: string;
+    scheduledFor: string | null;
+  }>;
+  skipped: Array<{
+    id: string;
+    reason: string;
+  }>;
+}
+
 function normalizeHttpUrl(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -211,6 +225,35 @@ export default function ClientPostToolPage() {
     }
   };
 
+  const unschedule = async (artifactIds: string[]) => {
+    if (!artifactIds.length) {
+      return;
+    }
+    const confirmed = window.confirm(`Unschedule ${artifactIds.length} queued post artifact(s)?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const payload = await request<UnscheduleResponse>(`/api/v1/clients/${clientId}/post-tool`, {
+        method: "POST",
+        body: {
+          action: "unschedule",
+          artifactIds
+        }
+      });
+      setStatus(`Unscheduled ${payload.unscheduledCount} artifact(s).`);
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <section className={styles.hero}>
@@ -326,6 +369,16 @@ export default function ClientPostToolPage() {
                   Push Latest Now
                 </button>
               ) : null}
+              {submitPreview?.created.length ? (
+                <button
+                  type="button"
+                  className={styles.buttonDanger}
+                  onClick={() => void unschedule(submitPreview.created.map((entry) => entry.id))}
+                  disabled={busy}
+                >
+                  Unschedule Latest
+                </button>
+              ) : null}
             </div>
           </div>
         </article>
@@ -391,6 +444,14 @@ export default function ClientPostToolPage() {
                             >
                               Push Now
                             </button>
+                            <button
+                              type="button"
+                              className={styles.buttonDanger}
+                              onClick={() => void unschedule([item.id])}
+                              disabled={busy}
+                            >
+                              Unschedule
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -434,14 +495,24 @@ export default function ClientPostToolPage() {
                         <div className={styles.inlineActions}>
                           <span>{item.status}</span>
                           {item.status === "draft" || item.status === "scheduled" ? (
-                            <button
-                              type="button"
-                              className={styles.buttonGhost}
-                              onClick={() => void pushNow([item.id])}
-                              disabled={busy}
-                            >
-                              Push Now
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                className={styles.buttonGhost}
+                                onClick={() => void pushNow([item.id])}
+                                disabled={busy}
+                              >
+                                Push Now
+                              </button>
+                              <button
+                                type="button"
+                                className={styles.buttonDanger}
+                                onClick={() => void unschedule([item.id])}
+                                disabled={busy}
+                              >
+                                Unschedule
+                              </button>
+                            </>
                           ) : null}
                         </div>
                       </td>

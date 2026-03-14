@@ -327,6 +327,67 @@ export async function POST(request: NextRequest, { params }: Params) {
       });
     }
 
+    if (action === "unschedule") {
+      const artifactIds = toStringArray(payload.artifactIds);
+      if (!artifactIds.length) {
+        return fail("artifactIds are required for unschedule", 400);
+      }
+
+      const candidates = await listClientContentArtifacts(params.clientId, {
+        channel: "gbp",
+        phase: "content",
+        status: "all",
+        limit: 500
+      });
+      const index = new Map(candidates.map((artifact) => [artifact.id, artifact]));
+      const nowIso = new Date().toISOString();
+      const updated: Array<{ id: string; status: string; scheduledFor: string | null }> = [];
+      const skipped: Array<{ id: string; reason: string }> = [];
+
+      for (const artifactId of artifactIds) {
+        const artifact = index.get(artifactId);
+        if (!artifact) {
+          skipped.push({ id: artifactId, reason: "not_found" });
+          continue;
+        }
+        if (artifact.status === "published") {
+          skipped.push({ id: artifactId, reason: "already_published" });
+          continue;
+        }
+        if (artifact.status === "failed") {
+          skipped.push({ id: artifactId, reason: "already_unscheduled_or_failed" });
+          continue;
+        }
+
+        const nextMetadata = {
+          ...artifact.metadata,
+          unscheduledAt: nowIso,
+          unscheduledVia: "isolated_post_tool"
+        };
+        const next = await updateContentArtifact(artifact.id, {
+          status: "failed",
+          scheduledFor: null,
+          metadata: nextMetadata
+        });
+        if (!next) {
+          skipped.push({ id: artifactId, reason: "update_failed" });
+          continue;
+        }
+        updated.push({
+          id: next.id,
+          status: next.status,
+          scheduledFor: next.scheduledFor
+        });
+      }
+
+      return ok({
+        action: "unschedule",
+        unscheduledCount: updated.length,
+        updated,
+        skipped
+      });
+    }
+
     const mode = resolveMode(payload.mode);
     const rawLandingUrls = toStringArray(payload.landingUrls)
       .map((entry) => normalizeHttpUrl(entry))
