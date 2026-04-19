@@ -290,7 +290,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
 
       <SidebarInset className="bg-[radial-gradient(circle_at_top_left,_rgba(245,245,244,0.96),_rgba(240,240,238,0.92)_55%,_rgba(234,234,231,0.94))]">
         <header className="sticky top-0 z-20 border-b border-border/70 bg-background/90 backdrop-blur">
-          <div className="flex flex-col gap-4 px-4 py-4 lg:px-6">
+          <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-4 lg:px-6">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
                 <SidebarTrigger className="mt-0.5" />
@@ -329,7 +329,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <div className="flex-1 px-4 py-4 lg:px-6 lg:py-6">{children}</div>
+        <div className="mx-auto flex w-full max-w-[1600px] flex-1 px-4 py-4 lg:px-6 lg:py-6">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   );
