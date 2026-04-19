@@ -1,6 +1,14 @@
 import type { ReactNode } from "react";
-import { IBM_Plex_Mono, Sora } from "next/font/google";
+import { IBM_Plex_Mono, Manrope, Sora } from "next/font/google";
 import "./globals.css";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+
+const bodyFont = Manrope({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  weight: ["400", "500", "600", "700"]
+});
 
 const headingFont = Sora({
   subsets: ["latin"],
@@ -16,9 +24,9 @@ const monoFont = IBM_Plex_Mono({
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={cn("font-sans", bodyFont.variable)}>
       <body className={`${headingFont.variable} ${monoFont.variable}`}>
-        {children}
+        <TooltipProvider>{children}</TooltipProvider>
       </body>
     </html>
   );

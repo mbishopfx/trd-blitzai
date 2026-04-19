@@ -2,128 +2,97 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import {
+  BadgeCheck,
+  Building2,
+  KeyRound,
+  ShieldCheck,
+  Sparkles,
+  UserCircle2
+} from "lucide-react";
 import { useDashboardContext } from "./dashboard-context";
-import styles from "./dashboard.module.css";
+import {
+  extractClientId,
+  getActiveDashboardItem,
+  getClientWorkspaceNav,
+  isActivePath,
+  platformNav
+} from "./dashboard-nav";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger
+} from "@/components/ui/sidebar";
 
-interface NavItem {
-  href: string;
+const roleOptions = [
+  { value: "owner", label: "Owner" },
+  { value: "admin", label: "Admin" },
+  { value: "operator", label: "Operator" },
+  { value: "analyst", label: "Analyst" },
+  { value: "client_viewer", label: "Client Viewer" }
+] as const;
+
+function WorkspaceSection({
+  label,
+  pathname,
+  items
+}: {
   label: string;
-  detail: string;
-}
-
-type UiTheme = "dark" | "light";
-type RailIcon = "home" | "search" | "user";
-
-interface RailNavItem {
-  href: string;
-  label: string;
-  icon: RailIcon;
-}
-
-const railNav: RailNavItem[] = [
-  {
-    href: "/dashboard",
-    label: "Home",
-    icon: "home"
-  },
-  {
-    href: "/dashboard/clients",
-    label: "Search",
-    icon: "search"
-  },
-  {
-    href: "/dashboard/blitz",
-    label: "User",
-    icon: "user"
-  }
-];
-
-const primaryNav: NavItem[] = [
-  {
-    href: "/dashboard",
-    label: "Overview",
-    detail: "Platform health and onboarding"
-  },
-  {
-    href: "/dashboard/clients",
-    label: "Clients",
-    detail: "Seeded locations and account control"
-  },
-  {
-    href: "/dashboard/blitz",
-    label: "Blitz Runs",
-    detail: "Launch and monitor orchestration"
-  }
-];
-
-function isActivePath(pathname: string, href: string): boolean {
-  if (href === "/dashboard") {
-    return pathname === "/dashboard";
-  }
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
-
-function extractClientId(pathname: string): string | null {
-  const match = pathname.match(/^\/dashboard\/clients\/([^/]+)/);
-  return match?.[1] ?? null;
-}
-
-function HomeIcon() {
+  pathname: string;
+  items: ReturnType<typeof getClientWorkspaceNav> | typeof platformNav;
+}) {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.iconGlyph}>
-      <path d="M3.8 10.5 12 3.8l8.2 6.7" />
-      <path d="M6.5 9.5v9.1a1.2 1.2 0 0 0 1.2 1.2h3.8v-5.3a.5.5 0 0 1 .5-.5h0a.5.5 0 0 1 .5.5v5.3h3.8a1.2 1.2 0 0 0 1.2-1.2V9.5" />
-    </svg>
+    <SidebarGroup>
+      <SidebarGroupLabel>{label}</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          {items.map((item) => (
+            <SidebarMenuItem key={item.href}>
+              <SidebarMenuButton
+                render={<Link href={item.href} />}
+                isActive={isActivePath(pathname, item.href)}
+                tooltip={item.label}
+              >
+                <item.icon />
+                <span>{item.label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   );
-}
-
-function SearchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.iconGlyph}>
-      <circle cx="10.5" cy="10.5" r="5.5" />
-      <path d="m15.1 15.1 5.1 5.1" />
-    </svg>
-  );
-}
-
-function UserIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.iconGlyph}>
-      <circle cx="12" cy="7.4" r="3.4" />
-      <path d="M5 20.2c.7-3.6 3.4-5.7 7-5.7s6.3 2.1 7 5.7" />
-    </svg>
-  );
-}
-
-function SunIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.iconGlyph}>
-      <circle cx="12" cy="12" r="4.2" />
-      <path d="M12 2.8v2.3M12 18.9v2.3M21.2 12h-2.3M5.1 12H2.8M18.5 5.5l-1.6 1.6M7.1 16.9l-1.6 1.6M18.5 18.5l-1.6-1.6M7.1 7.1 5.5 5.5" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={styles.iconGlyph}>
-      <path d="M15.9 3.6a8.8 8.8 0 1 0 4.5 15.7 8.1 8.1 0 0 1-4.5-15.7Z" />
-    </svg>
-  );
-}
-
-function renderRailIcon(icon: RailIcon) {
-  switch (icon) {
-    case "home":
-      return <HomeIcon />;
-    case "search":
-      return <SearchIcon />;
-    case "user":
-      return <UserIcon />;
-    default:
-      return null;
-  }
 }
 
 export function DashboardShell({ children }: { children: ReactNode }) {
@@ -146,70 +115,17 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
-  const [theme, setTheme] = useState<UiTheme>("dark");
-  const [themeToggleBump, setThemeToggleBump] = useState(false);
-  const toggleTimerRef = useRef<number | null>(null);
 
-  const selectedOrg = organizations.find((org) => org.id === selectedOrgId) ?? null;
   const clientId = useMemo(() => extractClientId(pathname), [pathname]);
-  const railActiveIndex = useMemo(() => {
-    const index = railNav.findIndex((item) => isActivePath(pathname, item.href));
-    return index < 0 ? 0 : index;
-  }, [pathname]);
-
-  const clientNav = useMemo<NavItem[]>(() => {
-    if (!clientId) {
-      return [];
-    }
-
-    return [
-      {
-        href: `/dashboard/clients/${clientId}`,
-        label: "Client Overview",
-        detail: "Worker status and integration health"
-      },
-      {
-        href: `/dashboard/clients/${clientId}/blitz`,
-        label: "Blitz Worker",
-        detail: "Runs, actions, and rollback"
-      },
-      {
-        href: `/dashboard/clients/${clientId}/post-tool`,
-        label: "Post Tool",
-        detail: "Single post or spawn 3 with QR + TinyURL"
-      },
-      {
-        href: `/dashboard/clients/${clientId}/content`,
-        label: "Content Ops",
-        detail: "Review drafts, approvals, and schedule queue"
-      },
-      {
-        href: `/dashboard/clients/${clientId}/qna`,
-        label: "Q&A Ops",
-        detail: "Seed packs and operator validation"
-      },
-      {
-        href: `/dashboard/clients/${clientId}/review-engine`,
-        label: "Review Engine",
-        detail: "Request/reply automation and queues"
-      },
-      {
-        href: `/dashboard/clients/${clientId}/actions-needed`,
-        label: "Actions Needed",
-        detail: "Approve or manually complete risky changes"
-      },
-      {
-        href: `/dashboard/clients/${clientId}/reviews`,
-        label: "Reviews",
-        detail: "Live reviews and auto-replies"
-      },
-      {
-        href: `/dashboard/clients/${clientId}/settings`,
-        label: "Orchestration",
-        detail: "Tone, objectives, photos, sitemap"
-      }
-    ];
-  }, [clientId]);
+  const activeItem = useMemo(() => getActiveDashboardItem(pathname), [pathname]);
+  const selectedOrg = useMemo(
+    () => organizations.find((organization) => organization.id === selectedOrgId) ?? null,
+    [organizations, selectedOrgId]
+  );
+  const clientWorkspaceNav = useMemo(
+    () => (clientId ? getClientWorkspaceNav(clientId) : []),
+    [clientId]
+  );
 
   const onSignIn = async () => {
     setAuthError(null);
@@ -221,244 +137,200 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     }
   };
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
+  const onSignOut = async () => {
+    setAuthError(null);
+    try {
+      await signOut();
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : String(error));
     }
-    const savedTheme = window.localStorage.getItem("trd-blitz-theme");
-    if (savedTheme === "dark" || savedTheme === "light") {
-      setTheme(savedTheme);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem("trd-blitz-theme", theme);
-  }, [theme]);
-
-  useEffect(() => {
-    return () => {
-      if (toggleTimerRef.current) {
-        window.clearTimeout(toggleTimerRef.current);
-      }
-    };
-  }, []);
-
-  const onToggleTheme = () => {
-    if (toggleTimerRef.current) {
-      window.clearTimeout(toggleTimerRef.current);
-    }
-    setThemeToggleBump(true);
-    setTheme((current) => (current === "dark" ? "light" : "dark"));
-    toggleTimerRef.current = window.setTimeout(() => {
-      setThemeToggleBump(false);
-      toggleTimerRef.current = null;
-    }, 520);
   };
 
   return (
-    <div className={styles.shell} data-theme={theme}>
-      <div className={styles.shellNoise} aria-hidden />
-      <div className={styles.shellAmbient} aria-hidden />
-      <aside className={styles.sidebar}>
-        <div className={styles.brand}>
-          <h1 className={styles.brandTitle}>TRD Blitz AI</h1>
-          <p className={styles.brandSub}>Autonomous GBP Orchestration</p>
-        </div>
-
-        <div className={styles.iconRailWrap}>
-          <nav className={styles.iconRail} aria-label="Primary navigation">
-            <div
-              className={styles.iconRailIndicator}
-              style={
-                {
-                  "--active-index": String(railActiveIndex)
-                } as CSSProperties
-              }
-              aria-hidden
-            >
-              <span className={styles.ringGlow} />
-              <span className={styles.ringClip}>
-                <span className={styles.ringSpin} />
-              </span>
-              <span className={styles.ringPlate} />
+    <SidebarProvider defaultOpen>
+      <Sidebar variant="inset" collapsible="icon" className="border-r border-sidebar-border/80">
+        <SidebarHeader className="gap-3 border-b border-sidebar-border/80">
+          <div className="rounded-xl border border-sidebar-border/80 bg-sidebar-accent/40 p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
+              <Sparkles className="text-sidebar-primary" />
+              <span>TRD AI Blitz</span>
             </div>
-
-            {railNav.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-label={item.label}
-                title={item.label}
-                className={`${styles.iconButton} ${isActivePath(pathname, item.href) ? styles.iconButtonActive : ""}`}
-              >
-                {renderRailIcon(item.icon)}
-              </Link>
-            ))}
-
-            <button
-              type="button"
-              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-              onClick={onToggleTheme}
-              className={`${styles.iconButton} ${styles.themeToggleButton} ${themeToggleBump ? styles.themeToggleBump : ""}`}
-            >
-              <span className={styles.themeIconSun}>
-                <SunIcon />
-              </span>
-              <span className={styles.themeIconMoon}>
-                <MoonIcon />
-              </span>
-            </button>
-          </nav>
-        </div>
-
-        <div className={styles.liveStream}>
-          <span className={styles.liveDot} />
-          <span className={styles.liveText}>Live Worker Stream Online</span>
-          <span className={styles.liveBars} aria-hidden>
-            <i />
-            <i />
-            <i />
-            <i />
-          </span>
-        </div>
-
-        <div className={styles.navSection}>
-          <p className={styles.navTitle}>Platform</p>
-          {primaryNav.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`${styles.navLink} ${isActivePath(pathname, item.href) ? styles.navLinkActive : ""}`}
-            >
-              <span className={styles.navLabel}>{item.label}</span>
-              <span className={styles.navDetail}>{item.detail}</span>
-            </Link>
-          ))}
-        </div>
-
-        {clientNav.length > 0 ? (
-          <div className={styles.navSection}>
-            <p className={styles.navTitle}>Client Workspace</p>
-            {clientNav.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`${styles.navLink} ${isActivePath(pathname, item.href) ? styles.navLinkActive : ""}`}
-              >
-                <span className={styles.navLabel}>{item.label}</span>
-                <span className={styles.navDetail}>{item.detail}</span>
-              </Link>
-            ))}
+            <p className="mt-1 text-xs leading-5 text-sidebar-foreground/70">
+              Light, operator-first workspace for client dashboards, blitz automation, and SEO intelligence.
+            </p>
           </div>
-        ) : null}
 
-        <div className={styles.sidebarFooter}>
-          <p className={styles.muted}>Org: {selectedOrg?.name ?? "No org selected"}</p>
-          <p className={styles.muted}>Role: {role}</p>
-          <p className={styles.muted}>Auth: {session?.user.email ?? (supabaseEnabled ? "Signed out" : "Bypass mode")}</p>
-        </div>
-      </aside>
+          <FieldGroup>
+            <Field>
+              <FieldLabel>Organization</FieldLabel>
+              <Select value={selectedOrgId || undefined} onValueChange={(value) => setSelectedOrgId(value ?? "")}>
+                <SelectTrigger className="w-full bg-background">
+                  <SelectValue placeholder="Select an organization" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {organizations.map((organization) => (
+                      <SelectItem key={organization.id} value={organization.id}>
+                        {organization.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                {selectedOrg ? selectedOrg.slug : "Workspace scope follows the selected organization."}
+              </FieldDescription>
+            </Field>
 
-      <main className={styles.main}>
-        <div className={styles.mainInner}>
-          <section className={styles.topbar}>
-            <div className={styles.topbarRow}>
-              <label className={styles.field}>
-                <span className={styles.label}>Organization</span>
-                <select
-                  className={styles.select}
-                  value={selectedOrgId}
-                  onChange={(event) => setSelectedOrgId(event.target.value)}
-                  disabled={isBusy}
-                >
-                  {organizations.length === 0 ? <option value="">No organizations</option> : null}
-                  {organizations.map((org) => (
-                    <option key={org.id} value={org.id}>
-                      {org.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <Field>
+              <FieldLabel>Role</FieldLabel>
+              <Select value={role} onValueChange={(value) => value && setRole(value as typeof role)}>
+                <SelectTrigger className="w-full bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {roleOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
 
-              <label className={styles.field}>
-                <span className={styles.label}>Role Header</span>
-                <select className={styles.select} value={role} onChange={(event) => setRole(event.target.value as typeof role)}>
-                  <option value="owner">owner</option>
-                  <option value="admin">admin</option>
-                  <option value="operator">operator</option>
-                  <option value="analyst">analyst</option>
-                  <option value="client_viewer">client_viewer</option>
-                </select>
-              </label>
+            <Field>
+              <FieldLabel>API Key Override</FieldLabel>
+              <Input
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder="blitz_..."
+              />
+              <FieldDescription>
+                Optional when you want key-based routing instead of browser-session auth.
+              </FieldDescription>
+            </Field>
+          </FieldGroup>
+        </SidebarHeader>
 
-              <label className={styles.field}>
-                <span className={styles.label}>API Key (Optional)</span>
-                <input
-                  className={styles.input}
-                  placeholder="blitz_xxx"
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                />
-              </label>
-            </div>
+        <SidebarContent>
+          <WorkspaceSection label="Platform" pathname={pathname} items={platformNav} />
+          {clientWorkspaceNav.length ? (
+            <>
+              <SidebarSeparator />
+              <WorkspaceSection label="Client Workspace" pathname={pathname} items={clientWorkspaceNav} />
+            </>
+          ) : null}
+        </SidebarContent>
 
-            {supabaseEnabled ? (
-              session ? (
-                <div className={styles.topbarRow}>
-                  <span className={`${styles.badge} ${styles.statusActive}`}>Signed in as {session.user.email}</span>
-                  <span className={styles.streamChip}>
-                    <span className={styles.streamDot} />
-                    Stream synced
-                  </span>
-                  <button type="button" className={styles.buttonGhost} onClick={() => void signOut()}>
-                    Sign out
-                  </button>
-                </div>
-              ) : (
-                <div className={styles.topbarRow}>
-                  <label className={styles.field}>
-                    <span className={styles.label}>Email</span>
-                    <input
-                      className={styles.input}
-                      autoComplete="email"
-                      value={email}
-                      onChange={(event) => setEmail(event.target.value)}
-                      placeholder="owner@agency.com"
-                    />
-                  </label>
-                  <label className={styles.field}>
-                    <span className={styles.label}>Password</span>
-                    <input
-                      className={styles.input}
-                      type="password"
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                    />
-                  </label>
-                  <button type="button" className={styles.buttonPrimary} onClick={() => void onSignIn()}>
-                    Sign in
-                  </button>
-                  {authError ? <span className={`${styles.badge} ${styles.statusError}`}>{authError}</span> : null}
-                </div>
-              )
-            ) : (
-              <div className={styles.topbarRow}>
-                <span className={`${styles.badge} ${styles.statusIdle}`}>
-                  Supabase browser auth is disabled. Requests use role headers.
-                </span>
+        <SidebarFooter className="border-t border-sidebar-border/80">
+          {!supabaseEnabled ? (
+            <Alert>
+              <ShieldCheck />
+              <AlertTitle>Local mode</AlertTitle>
+              <AlertDescription>
+                Supabase browser auth is not configured. The dashboard still works with API keys and fallback headers.
+              </AlertDescription>
+            </Alert>
+          ) : session?.user ? (
+            <div className="rounded-xl border border-sidebar-border/80 bg-background p-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <BadgeCheck className="text-emerald-600" />
+                <span>{session.user.email ?? "Authenticated"}</span>
               </div>
-            )}
-          </section>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Requests will use the current browser session token unless an API key override is set.
+              </p>
+              <Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => void onSignOut()}>
+                Sign Out
+              </Button>
+            </div>
+          ) : (
+            <FieldGroup>
+              <Field>
+                <FieldLabel>Email</FieldLabel>
+                <Input
+                  autoComplete="email"
+                  placeholder="operator@truerankdigital.com"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel>Password</FieldLabel>
+                <Input
+                  autoComplete="current-password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </Field>
+              <Button
+                className="w-full"
+                onClick={() => void onSignIn()}
+                disabled={!email.trim() || !password || isBusy}
+              >
+                Sign In
+              </Button>
+            </FieldGroup>
+          )}
 
-          {children}
-        </div>
-      </main>
-    </div>
+          {authError ? (
+            <Alert variant="destructive">
+              <KeyRound />
+              <AlertTitle>Auth issue</AlertTitle>
+              <AlertDescription>{authError}</AlertDescription>
+            </Alert>
+          ) : null}
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
+
+      <SidebarInset className="bg-[radial-gradient(circle_at_top_left,_rgba(245,245,244,0.96),_rgba(240,240,238,0.92)_55%,_rgba(234,234,231,0.94))]">
+        <header className="sticky top-0 z-20 border-b border-border/70 bg-background/90 backdrop-blur">
+          <div className="flex flex-col gap-4 px-4 py-4 lg:px-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <SidebarTrigger className="mt-0.5" />
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="font-heading text-lg font-semibold tracking-tight">
+                      {activeItem?.label ?? "Dashboard"}
+                    </h1>
+                    {selectedOrg ? (
+                      <Badge variant="secondary">
+                        <Building2 data-icon="inline-start" />
+                        {selectedOrg.name}
+                      </Badge>
+                    ) : null}
+                    <Badge variant="outline">
+                      <UserCircle2 data-icon="inline-start" />
+                      {role.replace("_", " ")}
+                    </Badge>
+                  </div>
+                  <p className="max-w-3xl text-sm text-muted-foreground">
+                    {activeItem?.description ??
+                      "Operate client workspaces, workers, and search intelligence from one clean command surface."}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={session?.user ? "secondary" : "outline"}>
+                  {session?.user ? "Authenticated" : supabaseEnabled ? "Signed out" : "Fallback auth"}
+                </Badge>
+                <Badge variant={apiKey.trim() ? "secondary" : "outline"}>
+                  {apiKey.trim() ? "API key set" : "Browser token mode"}
+                </Badge>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="flex-1 px-4 py-4 lg:px-6 lg:py-6">{children}</div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

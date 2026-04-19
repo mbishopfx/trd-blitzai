@@ -3,9 +3,27 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { Bot, Gauge, Link2, Sparkles, Workflow } from "lucide-react";
 import { ClientTabs } from "../../_components/client-tabs";
 import { useDashboardContext } from "../../_components/dashboard-context";
-import styles from "../../_components/dashboard.module.css";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
 
 interface ClientDetail {
   id: string;
@@ -52,7 +70,10 @@ interface DetailPayload {
 }
 
 function formatDate(value: string | null): string {
-  if (!value) return "N/A";
+  if (!value) {
+    return "N/A";
+  }
+
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
@@ -80,25 +101,31 @@ export default function ClientOverviewPage() {
         setPayload(detail);
         setIntegrations(integrationPayload.integrations);
       })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
+      .catch((requestError) => {
+        setError(requestError instanceof Error ? requestError.message : String(requestError));
       })
       .finally(() => {
         setLoading(false);
       });
   }, [clientId, request]);
 
-  const workerBadgeClass = useMemo(() => {
-    if (!payload) return styles.statusIdle;
-    if (payload.workerStatus === "active") return styles.statusActive;
-    if (payload.workerStatus === "error") return styles.statusError;
-    return styles.statusIdle;
+  const workerVariant = useMemo(() => {
+    if (!payload || payload.workerStatus === "idle") {
+      return "outline" as const;
+    }
+
+    if (payload.workerStatus === "error") {
+      return "destructive" as const;
+    }
+
+    return "secondary" as const;
   }, [payload]);
 
   const syncAttribution = async () => {
     setSyncingAttribution(true);
     setError(null);
     setStatus(null);
+
     try {
       const result = await request<{ summary: { rowCount: number; channels: string[] } }>(
         `/api/v1/clients/${clientId}/attribution/sync`,
@@ -107,135 +134,221 @@ export default function ClientOverviewPage() {
           body: { window: "30d" }
         }
       );
+
       setStatus(`Attribution synced: ${result.summary.rowCount} rows across ${result.summary.channels.join(", ")}.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
     } finally {
       setSyncingAttribution(false);
     }
   };
 
   return (
-    <>
-      <section className={styles.hero}>
-        <h2 className={styles.heroTitle}>{payload?.client.name ?? "Client Workspace"}</h2>
-        <p className={styles.heroSubtitle}>
-          Monitor live Blitz worker state, integration health, and the most recent run for this GBP client.
-        </p>
-        <ClientTabs clientId={clientId} />
-        <div className={styles.inlineActions}>
-          <button type="button" className={styles.buttonSecondary} onClick={() => void syncAttribution()} disabled={syncingAttribution}>
-            {syncingAttribution ? "Syncing Attribution..." : "Sync Attribution"}
-          </button>
-        </div>
-        {status ? <span className={`${styles.badge} ${styles.statusActive}`}>{status}</span> : null}
-        {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
-      </section>
-
-      <section className={styles.grid}>
-        <article className={`${styles.card} ${styles.col4}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Worker Status</h3>
-          </header>
-          <p className={styles.statValue}>{payload?.workerStatus ?? (loading ? "..." : "idle")}</p>
-          <span className={`${styles.badge} ${workerBadgeClass}`}>Blitz Worker {payload?.workerStatus ?? "idle"}</span>
-        </article>
-
-        <article className={`${styles.card} ${styles.col4}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Latest Run</h3>
-          </header>
-          <p className={styles.statValue}>{payload?.latestRun?.status ?? "No runs"}</p>
-          <p className={styles.statLabel}>Started: {formatDate(payload?.latestRun?.startedAt ?? null)}</p>
-        </article>
-
-        <article className={`${styles.card} ${styles.col4}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Connected Integrations</h3>
-          </header>
-          <p className={styles.statValue}>{integrations.length}</p>
-          <p className={styles.statLabel}>GBP / GA4 / Google Ads connectors</p>
-        </article>
-
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Client Profile</h3>
-          </header>
-          {payload ? (
-            <div className={styles.stack}>
-              <p className={styles.empty}>Timezone: {payload.client.timezone}</p>
-              <p className={styles.empty}>Primary Location: {payload.client.primaryLocationLabel ?? "N/A"}</p>
-              <p className={styles.empty}>
-                Website: {payload.client.websiteUrl ? <a className={styles.link} href={payload.client.websiteUrl}>{payload.client.websiteUrl}</a> : "N/A"}
-              </p>
-              <p className={styles.empty}>Created: {formatDate(payload.client.createdAt)}</p>
-            </div>
-          ) : (
-            <p className={styles.empty}>{loading ? "Loading client profile..." : "No client data."}</p>
-          )}
-        </article>
-
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Latest Run Action Summary</h3>
-          </header>
-          {payload?.latestRun ? (
-            <div className={styles.kpiRow}>
-              <span className={styles.badge}>Attempted {payload.latestRunActionSummary.attempted}</span>
-              <span className={styles.badge}>Executed {payload.latestRunActionSummary.executed}</span>
-              <span className={styles.badge}>Failed {payload.latestRunActionSummary.failed}</span>
-              <span className={styles.badge}>Pending {payload.latestRunActionSummary.pending}</span>
-              <span className={styles.badge}>Rolled Back {payload.latestRunActionSummary.rolledBack}</span>
-              <span className={styles.badge}>Skipped {payload.latestRunActionSummary.skipped}</span>
-            </div>
-          ) : (
-            <p className={styles.empty}>No run executed yet. Start one from Blitz Worker.</p>
-          )}
-        </article>
-
-        <article className={`${styles.card} ${styles.col12}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Recent Runs</h3>
-          </header>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Run ID</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Started</th>
-                  <th>Completed</th>
-                  <th>Triggered By</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payload?.recentRuns?.map((run) => (
-                  <tr key={run.id}>
-                    <td>
-                      <Link className={styles.link} href={`/dashboard/clients/${clientId}/blitz?runId=${encodeURIComponent(run.id)}`}>
-                        {run.id}
-                      </Link>
-                    </td>
-                    <td>{run.status}</td>
-                    <td>{formatDate(run.createdAt)}</td>
-                    <td>{formatDate(run.startedAt)}</td>
-                    <td>{formatDate(run.completedAt)}</td>
-                    <td>{run.createdBy}</td>
-                  </tr>
-                ))}
-                {!loading && (!payload || payload.recentRuns.length === 0) ? (
-                  <tr>
-                    <td colSpan={6}>
-                      <p className={styles.empty}>No runs yet for this client.</p>
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+    <div className="flex flex-col gap-6">
+      <Card className="shadow-sm">
+        <CardHeader>
+          <CardTitle>{payload?.client.name ?? "Client Workspace"}</CardTitle>
+          <CardDescription>
+            Monitor worker health, recent runs, integrations, attribution, and Apify-powered SEO intelligence from one workspace.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant={workerVariant}>
+              <Gauge data-icon="inline-start" />
+              Blitz Worker {payload?.workerStatus ?? (loading ? "loading" : "idle")}
+            </Badge>
+            <Badge variant="outline">{integrations.length} integrations</Badge>
+            {payload?.client.primaryLocationLabel ? (
+              <Badge variant="outline">{payload.client.primaryLocationLabel}</Badge>
+            ) : null}
           </div>
-        </article>
-      </section>
-    </>
+
+          <ClientTabs clientId={clientId} />
+
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => void syncAttribution()} disabled={syncingAttribution}>
+              <Sparkles data-icon="inline-start" />
+              {syncingAttribution ? "Syncing Attribution..." : "Sync Attribution"}
+            </Button>
+            <Button render={<Link href={`/dashboard/clients/${clientId}/blitz`} />} variant="outline">
+              <Workflow data-icon="inline-start" />
+              Open Blitz Worker
+            </Button>
+            <Button render={<Link href={`/dashboard/clients/${clientId}/apify`} />} variant="ghost">
+              <Bot data-icon="inline-start" />
+              Open Apify SEO
+            </Button>
+          </div>
+
+          {status ? (
+            <Alert>
+              <AlertTitle>Attribution sync complete</AlertTitle>
+              <AlertDescription>{status}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>Workspace issue</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Card>
+          <CardHeader>
+            <CardDescription>Worker Status</CardDescription>
+            <CardTitle>{payload?.workerStatus ?? (loading ? "..." : "idle")}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              The latest blitz run determines whether this workspace is active, idle, or needs investigation.
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Latest Run</CardDescription>
+            <CardTitle>{payload?.latestRun?.status ?? "No runs"}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Started: {formatDate(payload?.latestRun?.startedAt ?? null)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Connected Integrations</CardDescription>
+            <CardTitle>{integrations.length}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              GBP, GA4, Google Ads, Search Console, and future channels surface here.
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Apify SEO Lane</CardDescription>
+            <CardTitle>{payload?.client.websiteUrl ? "Ready" : "Partial"}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Brand-ranking and AI SEO scans are enabled. Website crawl depth improves once the client URL is set.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
+        <Card className="shadow-sm">
+          <CardHeader>
+            <CardTitle>Client Profile</CardTitle>
+            <CardDescription>Workspace metadata that feeds blitz automation and external SEO scans.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 text-sm text-muted-foreground">
+            <div>
+              <p className="font-medium text-foreground">Timezone</p>
+              <p>{payload?.client.timezone ?? "Loading..."}</p>
+            </div>
+            <div>
+              <p className="font-medium text-foreground">Primary Location</p>
+              <p>{payload?.client.primaryLocationLabel ?? "Not set"}</p>
+            </div>
+            <div>
+              <p className="font-medium text-foreground">Website</p>
+              {payload?.client.websiteUrl ? (
+                <a
+                  className="inline-flex items-center gap-2 text-foreground underline underline-offset-4"
+                  href={payload.client.websiteUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Link2 className="size-4" />
+                  {payload.client.websiteUrl}
+                </a>
+              ) : (
+                <p>Not set</p>
+              )}
+            </div>
+            <div>
+              <p className="font-medium text-foreground">Created</p>
+              <p>{payload ? formatDate(payload.client.createdAt) : "Loading..."}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm">
+          <CardHeader>
+            <CardTitle>Latest Run Action Summary</CardTitle>
+            <CardDescription>Fast read on how the most recent blitz run performed.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            <Badge variant="secondary">Attempted {payload?.latestRunActionSummary.attempted ?? 0}</Badge>
+            <Badge variant="secondary">Executed {payload?.latestRunActionSummary.executed ?? 0}</Badge>
+            <Badge variant="outline">Pending {payload?.latestRunActionSummary.pending ?? 0}</Badge>
+            <Badge variant={payload?.latestRunActionSummary.failed ? "destructive" : "outline"}>
+              Failed {payload?.latestRunActionSummary.failed ?? 0}
+            </Badge>
+            <Badge variant="outline">Rolled Back {payload?.latestRunActionSummary.rolledBack ?? 0}</Badge>
+            <Badge variant="outline">Skipped {payload?.latestRunActionSummary.skipped ?? 0}</Badge>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="shadow-sm">
+        <CardHeader>
+          <CardTitle>Recent Runs</CardTitle>
+          <CardDescription>Jump directly into run-specific blitz details from the workspace timeline.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Run ID</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>Started</TableHead>
+                <TableHead>Completed</TableHead>
+                <TableHead>Triggered By</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {payload?.recentRuns?.length ? (
+                payload.recentRuns.map((run) => (
+                  <TableRow key={run.id}>
+                    <TableCell>
+                      <Button
+                        render={<Link href={`/dashboard/clients/${clientId}/blitz?runId=${encodeURIComponent(run.id)}`} />}
+                        variant="link"
+                        size="sm"
+                        className="h-auto px-0"
+                      >
+                        {run.id}
+                      </Button>
+                    </TableCell>
+                    <TableCell>{run.status}</TableCell>
+                    <TableCell>{formatDate(run.createdAt)}</TableCell>
+                    <TableCell>{formatDate(run.startedAt)}</TableCell>
+                    <TableCell>{formatDate(run.completedAt)}</TableCell>
+                    <TableCell>{run.createdBy}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
+                    No runs yet for this client.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

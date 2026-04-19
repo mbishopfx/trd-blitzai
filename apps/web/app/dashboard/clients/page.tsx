@@ -2,8 +2,33 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { Building2, Globe, Sparkles, Workflow } from "lucide-react";
 import { useDashboardContext } from "../_components/dashboard-context";
-import styles from "../_components/dashboard.module.css";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle
+} from "@/components/ui/empty";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
 
 interface ClientRecord {
   id: string;
@@ -74,11 +99,23 @@ export default function ClientsPage() {
     if (!seedQueryState.oauthConnected) {
       return null;
     }
+
     if (seedQueryState.seedError) {
       return `OAuth connected, but seeding returned an error: ${seedQueryState.seedError}`;
     }
-    return `OAuth connected. Seeded ${seedQueryState.seededClients ?? "0"} new clients, refreshed ${seedQueryState.refreshedClients ?? "0"} existing clients, skipped ${seedQueryState.seededSkipped ?? "0"}.`;
+
+    return `OAuth connected. Seeded ${seedQueryState.seededClients ?? "0"} new clients, refreshed ${
+      seedQueryState.refreshedClients ?? "0"
+    } existing clients, skipped ${seedQueryState.seededSkipped ?? "0"}.`;
   }, [seedQueryState]);
+
+  const workspaceStats = useMemo(
+    () => ({
+      websites: clients.filter((client) => Boolean(client.websiteUrl)).length,
+      locations: clients.filter((client) => Boolean(client.primaryLocationLabel)).length
+    }),
+    [clients]
+  );
 
   const loadClients = () => {
     if (!selectedOrgId) {
@@ -88,12 +125,13 @@ export default function ClientsPage() {
 
     setLoading(true);
     setError(null);
+
     void request<{ clients: ClientRecord[] }>(`/api/v1/orgs/${selectedOrgId}/clients`)
       .then((payload) => {
         setClients(payload.clients);
       })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
+      .catch((requestError) => {
+        setError(requestError instanceof Error ? requestError.message : String(requestError));
       })
       .finally(() => {
         setLoading(false);
@@ -104,7 +142,7 @@ export default function ClientsPage() {
 
   const startOAuthSeed = async () => {
     if (!selectedOrgId) {
-      setError("Select an organization before starting OAuth");
+      setError("Select an organization before starting OAuth.");
       return;
     }
 
@@ -118,44 +156,22 @@ export default function ClientsPage() {
       );
 
       window.location.assign(oauthStart.authUrl);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setBusy(false);
-    }
-  };
-
-  const deleteClient = async (client: ClientRecord) => {
-    const confirmed = window.confirm(
-      `Delete ${client.name} from Blitz platform? This only removes it from TRD Blitz and does not remove it from Google Business Profile.`
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    setAutofillStatus(null);
-    try {
-      await request(`/api/v1/clients/${client.id}`, {
-        method: "DELETE"
-      });
-      loadClients();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
       setBusy(false);
     }
   };
 
   const autofillSitemaps = async () => {
     if (!selectedOrgId) {
-      setError("Select an organization before auto-filling sitemaps");
+      setError("Select an organization before auto-filling sitemaps.");
       return;
     }
 
     setBusy(true);
     setError(null);
     setAutofillStatus(null);
+
     try {
       const payload = await request<SitemapAutofillResponse>(`/api/v1/orgs/${selectedOrgId}/clients/sitemaps/autofill`, {
         method: "POST",
@@ -163,105 +179,191 @@ export default function ClientsPage() {
           overwrite: false
         }
       });
+
       setAutofillStatus(
         `Sitemap autofill finished. Updated ${payload.summary.updated}/${payload.summary.total}, skipped ${payload.summary.skipped}, failed ${payload.summary.failed}.`
       );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteClient = async (client: ClientRecord) => {
+    const confirmed = window.confirm(
+      `Delete ${client.name} from TRD AI Blitz? This only removes it from the platform, not from Google Business Profile.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      await request(`/api/v1/clients/${client.id}`, { method: "DELETE" });
+      loadClients();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : String(requestError));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <>
-      <section className={styles.hero}>
-        <h2 className={styles.heroTitle}>Client Workspace Index</h2>
-        <p className={styles.heroSubtitle}>
-          This tab lists every seeded GBP client. Click any client to open its dedicated orchestration workspace.
-        </p>
-        <div className={styles.inlineActions}>
-          <button type="button" className={styles.buttonPrimary} onClick={() => void startOAuthSeed()} disabled={busy}>
-            {busy ? "Starting OAuth..." : "Connect Google + Seed Clients"}
-          </button>
-          <button type="button" className={styles.buttonSecondary} onClick={() => void autofillSitemaps()} disabled={busy}>
-            Auto-fill Sitemaps
-          </button>
-          <button type="button" className={styles.buttonGhost} onClick={loadClients} disabled={loading}>
-            Refresh Client List
-          </button>
-        </div>
-        {seedStatusLabel ? (
-          <span className={`${styles.badge} ${seedQueryState.seedError ? styles.statusError : styles.statusActive}`}>
-            {seedStatusLabel}
-          </span>
-        ) : null}
-        {autofillStatus ? <span className={`${styles.badge} ${styles.statusActive}`}>{autofillStatus}</span> : null}
-        {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
-      </section>
+    <div className="flex flex-col gap-6">
+      <Card className="shadow-sm">
+        <CardHeader>
+          <CardTitle>Client Workspace Index</CardTitle>
+          <CardDescription>
+            Seed Google Business Profile clients, manage workspace access, and jump directly into blitz or Apify SEO lanes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => void startOAuthSeed()} disabled={busy}>
+              <Building2 data-icon="inline-start" />
+              {busy ? "Starting OAuth..." : "Connect Google + Seed Clients"}
+            </Button>
+            <Button variant="outline" onClick={() => void autofillSitemaps()} disabled={busy}>
+              <Globe data-icon="inline-start" />
+              Auto-fill Sitemaps
+            </Button>
+            <Button variant="ghost" onClick={loadClients} disabled={loading}>
+              Refresh Client List
+            </Button>
+          </div>
 
-      <section className={styles.card}>
-        <header className={styles.cardHeader}>
-          <h3 className={styles.cardTitle}>Seeded Clients ({clients.length})</h3>
-          <p className={styles.cardHint}>Each row maps to a managed GBP location</p>
-        </header>
+          {seedStatusLabel ? (
+            <Alert variant={seedQueryState.seedError ? "destructive" : "default"}>
+              <Sparkles />
+              <AlertTitle>Seed result</AlertTitle>
+              <AlertDescription>{seedStatusLabel}</AlertDescription>
+            </Alert>
+          ) : null}
 
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Client</th>
-                <th>Primary Location</th>
-                <th>Timezone</th>
-                <th>Website</th>
-                <th>Created</th>
-                <th>Workspace</th>
-                <th>Platform Control</th>
-              </tr>
-            </thead>
-            <tbody>
-              {clients.map((client) => (
-                <tr key={client.id}>
-                  <td>
-                    <strong>{client.name}</strong>
-                    <br />
-                    <span className={styles.muted}>{client.id}</span>
-                  </td>
-                  <td>{client.primaryLocationLabel ?? "Not synced"}</td>
-                  <td>{client.timezone}</td>
-                  <td>
-                    {client.websiteUrl ? (
-                      <a href={client.websiteUrl} target="_blank" rel="noreferrer" className={styles.link}>
-                        {client.websiteUrl}
-                      </a>
-                    ) : (
-                      <span className={styles.muted}>N/A</span>
-                    )}
-                  </td>
-                  <td>{formatDate(client.createdAt)}</td>
-                  <td>
-                    <Link className={styles.link} href={`/dashboard/clients/${client.id}`}>
-                      Open
-                    </Link>
-                  </td>
-                  <td>
-                    <button type="button" className={styles.buttonDanger} disabled={busy} onClick={() => void deleteClient(client)}>
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {!loading && clients.length === 0 ? (
-                <tr>
-                  <td colSpan={7}>
-                    <p className={styles.empty}>No clients found. Run "Connect Google + Seed Clients" to import your GBP locations.</p>
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </>
+          {autofillStatus ? (
+            <Alert>
+              <Workflow />
+              <AlertTitle>Sitemap autofill</AlertTitle>
+              <AlertDescription>{autofillStatus}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>Workspace issue</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardDescription>Seeded Clients</CardDescription>
+            <CardTitle>{loading ? "..." : clients.length}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Managed workspaces under the current organization.</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Websites Ready</CardDescription>
+            <CardTitle>{workspaceStats.websites}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Clients that can support website crawl and brand-ranking scans.</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Locations Ready</CardDescription>
+            <CardTitle>{workspaceStats.locations}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Clients with a location label available for local SEO lookups.</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="shadow-sm">
+        <CardHeader>
+          <CardTitle>Seeded Clients</CardTitle>
+          <CardDescription>
+            Every row opens a dedicated workspace with blitz controls and Apify-powered SEO actions.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {clients.length ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Client</TableHead>
+                  <TableHead>Primary Location</TableHead>
+                  <TableHead>Timezone</TableHead>
+                  <TableHead>Website</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Workspace</TableHead>
+                  <TableHead>SEO Intel</TableHead>
+                  <TableHead>Control</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {clients.map((client) => (
+                  <TableRow key={client.id}>
+                    <TableCell className="font-medium">{client.name}</TableCell>
+                    <TableCell>{client.primaryLocationLabel ?? "Not set"}</TableCell>
+                    <TableCell>{client.timezone}</TableCell>
+                    <TableCell>{client.websiteUrl ?? "Missing"}</TableCell>
+                    <TableCell>{formatDate(client.createdAt)}</TableCell>
+                    <TableCell>
+                      <Button
+                        render={<Link href={`/dashboard/clients/${client.id}`} />}
+                        variant="outline"
+                        size="sm"
+                      >
+                        Open
+                      </Button>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        render={<Link href={`/dashboard/clients/${client.id}/apify`} />}
+                        variant="ghost"
+                        size="sm"
+                      >
+                        <Sparkles data-icon="inline-start" />
+                        Apify SEO
+                      </Button>
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="destructive" size="sm" onClick={() => void deleteClient(client)}>
+                        Remove
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <Empty className="border border-dashed border-border/80">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Building2 />
+                </EmptyMedia>
+                <EmptyTitle>No seeded clients yet</EmptyTitle>
+                <EmptyDescription>
+                  Connect Google and seed clients to start using the redesigned workspace system.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

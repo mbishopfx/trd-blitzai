@@ -2,41 +2,37 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import styles from "./dashboard.module.css";
+import { Button } from "@/components/ui/button";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { getClientWorkspaceNav, isActivePath } from "./dashboard-nav";
 
 interface ClientTabsProps {
   clientId: string;
 }
 
-const tabs = [
-  { key: "overview", label: "Overview", href: (id: string) => `/dashboard/clients/${id}` },
-  { key: "blitz", label: "Blitz Worker", href: (id: string) => `/dashboard/clients/${id}/blitz` },
-  { key: "content", label: "Content Ops", href: (id: string) => `/dashboard/clients/${id}/content` },
-  { key: "post-tool", label: "Post Tool", href: (id: string) => `/dashboard/clients/${id}/post-tool` },
-  { key: "qna", label: "Q&A Ops", href: (id: string) => `/dashboard/clients/${id}/qna` },
-  { key: "review-engine", label: "Review Engine", href: (id: string) => `/dashboard/clients/${id}/review-engine` },
-  { key: "actions-needed", label: "Actions Needed", href: (id: string) => `/dashboard/clients/${id}/actions-needed` },
-  { key: "reviews", label: "Reviews", href: (id: string) => `/dashboard/clients/${id}/reviews` },
-  { key: "settings", label: "Orchestration", href: (id: string) => `/dashboard/clients/${id}/settings` }
-] as const;
-
-function isActive(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
-
 export function ClientTabs({ clientId }: ClientTabsProps) {
   const pathname = usePathname();
+  const tabs = getClientWorkspaceNav(clientId);
 
   return (
-    <nav className={styles.tabs} aria-label="Client tabs">
-      {tabs.map((tab) => {
-        const href = tab.href(clientId);
-        return (
-          <Link key={tab.key} href={href} className={`${styles.tabLink} ${isActive(pathname, href) ? styles.tabLinkActive : ""}`}>
-            {tab.label}
-          </Link>
-        );
-      })}
-    </nav>
+    <div className="rounded-xl border border-border/80 bg-card/95 shadow-sm">
+      <ScrollArea className="w-full whitespace-nowrap">
+        <nav aria-label="Client workspace navigation" className="flex gap-2 p-2">
+          {tabs.map((tab) => (
+            <Button
+              key={tab.href}
+              render={<Link href={tab.href} />}
+              variant={isActivePath(pathname, tab.href) ? "secondary" : "ghost"}
+              size="sm"
+              className="justify-start"
+            >
+              <tab.icon data-icon="inline-start" />
+              {tab.label}
+            </Button>
+          ))}
+        </nav>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
+    </div>
   );
 }
