@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from "lucide-react";
 import {
+  BellRing,
   Bot,
   Boxes,
   ClipboardList,
@@ -41,6 +42,12 @@ export const platformNav: DashboardNavItem[] = [
     label: "Blitz Runs",
     description: "Global run queue, worker state, and launch controls.",
     icon: Sparkles
+  },
+  {
+    href: "/dashboard/incidents",
+    label: "Incident Meets",
+    description: "Launch code red, yellow, and green Google Meet bridges for the team.",
+    icon: BellRing
   }
 ];
 

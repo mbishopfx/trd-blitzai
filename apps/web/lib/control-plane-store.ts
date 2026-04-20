@@ -131,6 +131,8 @@ interface Store {
   integrations: Map<string, IntegrationConnection>;
   rollbacks: Map<string, RollbackRecord>;
   contentArtifacts: Map<string, ContentArtifact>;
+  incidentMeetConnections: Map<string, IncidentMeetConnection>;
+  incidentMeetEvents: Map<string, IncidentMeetEvent>;
   attribution: DailyChannelMetric[];
 }
 
@@ -147,6 +149,37 @@ export interface ContentArtifact {
   status: "draft" | "scheduled" | "published" | "failed";
   scheduledFor: string | null;
   publishedAt: string | null;
+  createdAt: string;
+}
+
+export interface IncidentMeetConnection {
+  id: string;
+  organizationId: string;
+  senderEmail: string;
+  encryptedTokenPayload: Record<string, unknown>;
+  scopes: string[];
+  metadata: Record<string, unknown>;
+  tokenExpiresAt: string | null;
+  connectedAt: string;
+  lastRefreshAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IncidentMeetEvent {
+  id: string;
+  organizationId: string;
+  connectionId: string | null;
+  severity: "code_red" | "code_yellow" | "code_green";
+  summary: string;
+  description: string;
+  meetUrl: string | null;
+  calendarEventId: string | null;
+  calendarHtmlLink: string | null;
+  startsAt: string;
+  endsAt: string;
+  attendees: string[];
+  createdBy: string | null;
   createdAt: string;
 }
 
@@ -188,6 +221,8 @@ function getStore(): Store {
       integrations: new Map(),
       rollbacks: new Map(),
       contentArtifacts: new Map(),
+      incidentMeetConnections: new Map(),
+      incidentMeetEvents: new Map(),
       attribution: []
     };
   }
@@ -424,6 +459,41 @@ function mapContentArtifactRow(row: Record<string, unknown>): ContentArtifact {
   };
 }
 
+function mapIncidentMeetConnectionRow(row: Record<string, unknown>): IncidentMeetConnection {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    senderEmail: String(row.sender_email ?? ""),
+    encryptedTokenPayload: (row.encrypted_token_payload as Record<string, unknown> | null) ?? {},
+    scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
+    metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+    tokenExpiresAt: toIsoOrNull(row.token_expires_at),
+    connectedAt: String(row.connected_at ?? nowIso()),
+    lastRefreshAt: toIsoOrNull(row.last_refresh_at),
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? row.created_at ?? nowIso())
+  };
+}
+
+function mapIncidentMeetEventRow(row: Record<string, unknown>): IncidentMeetEvent {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    connectionId: typeof row.connection_id === "string" ? row.connection_id : null,
+    severity: String(row.severity) as IncidentMeetEvent["severity"],
+    summary: String(row.summary ?? ""),
+    description: String(row.description ?? ""),
+    meetUrl: typeof row.meet_url === "string" ? row.meet_url : null,
+    calendarEventId: typeof row.calendar_event_id === "string" ? row.calendar_event_id : null,
+    calendarHtmlLink: typeof row.calendar_html_link === "string" ? row.calendar_html_link : null,
+    startsAt: String(row.starts_at ?? nowIso()),
+    endsAt: String(row.ends_at ?? nowIso()),
+    attendees: Array.isArray(row.attendees) ? row.attendees.map(String) : [],
+    createdBy: typeof row.created_by === "string" ? row.created_by : null,
+    createdAt: String(row.created_at ?? nowIso())
+  };
+}
+
 function seedRunActions(runId: string): BlitzAction[] {
   const store = getStore();
   const phases: BlitzPhase[] = [
@@ -559,6 +629,158 @@ export async function listOrganizations(input?: { userId?: string }): Promise<Or
   }
 
   return (orgRows ?? []).map((row) => mapOrganizationRow(row as Record<string, unknown>));
+}
+
+export async function getIncidentMeetConnection(organizationId: string): Promise<IncidentMeetConnection | null> {
+  if (!isSupabaseConfigured()) {
+    return [...getStore().incidentMeetConnections.values()].find((connection) => connection.organizationId === organizationId) ?? null;
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("incident_meet_connections")
+    .select("id,organization_id,sender_email,encrypted_token_payload,scopes,metadata,token_expires_at,connected_at,last_refresh_at,created_at,updated_at")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load incident meet connection: ${error.message}`);
+  }
+
+  return data ? mapIncidentMeetConnectionRow(data as Record<string, unknown>) : null;
+}
+
+export async function upsertIncidentMeetConnection(input: {
+  organizationId: string;
+  senderEmail: string;
+  encryptedTokenPayload: Record<string, unknown>;
+  scopes: string[];
+  metadata?: Record<string, unknown>;
+  tokenExpiresAt?: string | null;
+  lastRefreshAt?: string | null;
+}): Promise<IncidentMeetConnection> {
+  if (!isSupabaseConfigured()) {
+    const store = getStore();
+    const existing = [...store.incidentMeetConnections.values()].find((connection) => connection.organizationId === input.organizationId);
+    const next: IncidentMeetConnection = {
+      id: existing?.id ?? randomUUID(),
+      organizationId: input.organizationId,
+      senderEmail: input.senderEmail,
+      encryptedTokenPayload: input.encryptedTokenPayload,
+      scopes: input.scopes,
+      metadata: input.metadata ?? existing?.metadata ?? {},
+      tokenExpiresAt: input.tokenExpiresAt ?? existing?.tokenExpiresAt ?? null,
+      connectedAt: existing?.connectedAt ?? nowIso(),
+      lastRefreshAt: input.lastRefreshAt ?? existing?.lastRefreshAt ?? null,
+      createdAt: existing?.createdAt ?? nowIso(),
+      updatedAt: nowIso()
+    };
+    store.incidentMeetConnections.set(next.id, next);
+    return next;
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("incident_meet_connections")
+    .upsert(
+      {
+        organization_id: input.organizationId,
+        sender_email: input.senderEmail,
+        encrypted_token_payload: input.encryptedTokenPayload,
+        scopes: input.scopes,
+        metadata: input.metadata ?? {},
+        token_expires_at: input.tokenExpiresAt ?? null,
+        last_refresh_at: input.lastRefreshAt ?? null
+      },
+      { onConflict: "organization_id" }
+    )
+    .select("id,organization_id,sender_email,encrypted_token_payload,scopes,metadata,token_expires_at,connected_at,last_refresh_at,created_at,updated_at")
+    .single();
+  if (error || !data) {
+    throw new Error(`Failed to upsert incident meet connection: ${error?.message ?? "unknown error"}`);
+  }
+
+  return mapIncidentMeetConnectionRow(data as Record<string, unknown>);
+}
+
+export async function createIncidentMeetEvent(input: {
+  organizationId: string;
+  connectionId?: string | null;
+  severity: IncidentMeetEvent["severity"];
+  summary: string;
+  description: string;
+  meetUrl?: string | null;
+  calendarEventId?: string | null;
+  calendarHtmlLink?: string | null;
+  startsAt: string;
+  endsAt: string;
+  attendees: string[];
+  createdBy?: string | null;
+}): Promise<IncidentMeetEvent> {
+  if (!isSupabaseConfigured()) {
+    const event: IncidentMeetEvent = {
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      connectionId: input.connectionId ?? null,
+      severity: input.severity,
+      summary: input.summary,
+      description: input.description,
+      meetUrl: input.meetUrl ?? null,
+      calendarEventId: input.calendarEventId ?? null,
+      calendarHtmlLink: input.calendarHtmlLink ?? null,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      attendees: input.attendees,
+      createdBy: input.createdBy ?? null,
+      createdAt: nowIso()
+    };
+    getStore().incidentMeetEvents.set(event.id, event);
+    return event;
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("incident_meet_events")
+    .insert({
+      organization_id: input.organizationId,
+      connection_id: input.connectionId ?? null,
+      severity: input.severity,
+      summary: input.summary,
+      description: input.description,
+      meet_url: input.meetUrl ?? null,
+      calendar_event_id: input.calendarEventId ?? null,
+      calendar_html_link: input.calendarHtmlLink ?? null,
+      starts_at: input.startsAt,
+      ends_at: input.endsAt,
+      attendees: input.attendees,
+      created_by: input.createdBy ?? null
+    })
+    .select("id,organization_id,connection_id,severity,summary,description,meet_url,calendar_event_id,calendar_html_link,starts_at,ends_at,attendees,created_by,created_at")
+    .single();
+  if (error || !data) {
+    throw new Error(`Failed to create incident meet event: ${error?.message ?? "unknown error"}`);
+  }
+
+  return mapIncidentMeetEventRow(data as Record<string, unknown>);
+}
+
+export async function listIncidentMeetEvents(organizationId: string, limit = 20): Promise<IncidentMeetEvent[]> {
+  const safeLimit = Math.max(1, Math.min(limit, 100));
+
+  if (!isSupabaseConfigured()) {
+    return [...getStore().incidentMeetEvents.values()]
+      .filter((event) => event.organizationId === organizationId)
+      .sort((left, right) => new Date(right.startsAt).getTime() - new Date(left.startsAt).getTime())
+      .slice(0, safeLimit);
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("incident_meet_events")
+    .select("id,organization_id,connection_id,severity,summary,description,meet_url,calendar_event_id,calendar_html_link,starts_at,ends_at,attendees,created_by,created_at")
+    .eq("organization_id", organizationId)
+    .order("starts_at", { ascending: false })
+    .limit(safeLimit);
+  if (error) {
+    throw new Error(`Failed to list incident meet events: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => mapIncidentMeetEventRow(row as Record<string, unknown>));
 }
 
 export async function createClient(input: {
