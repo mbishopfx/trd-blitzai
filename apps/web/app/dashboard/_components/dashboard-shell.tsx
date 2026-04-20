@@ -50,7 +50,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarRail,
   SidebarSeparator,
   SidebarTrigger
 } from "@/components/ui/sidebar";
@@ -147,7 +146,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <SidebarProvider defaultOpen>
+    <SidebarProvider defaultOpen={false}>
       <Sidebar variant="inset" collapsible="offcanvas" className="border-r border-sidebar-border/80">
         <SidebarHeader className="gap-3 border-b border-sidebar-border/80">
           <div className="rounded-xl border border-sidebar-border/80 bg-sidebar-accent/40 p-3">
@@ -285,7 +284,6 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             </Alert>
           ) : null}
         </SidebarFooter>
-        <SidebarRail />
       </Sidebar>
 
       <SidebarInset className="bg-[radial-gradient(circle_at_top_left,_rgba(245,245,244,0.96),_rgba(240,240,238,0.92)_55%,_rgba(234,234,231,0.94))]">
