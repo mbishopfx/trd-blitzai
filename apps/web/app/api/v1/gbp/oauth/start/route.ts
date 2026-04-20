@@ -1,6 +1,7 @@
 import { buildGbpOAuthUrl } from "@trd-aiblitz/integrations-gbp";
 import { NextRequest } from "next/server";
 import { getRequestContext, hasRole } from "@/lib/auth";
+import { resolveGoogleOAuthRedirectUri } from "@/lib/google-oauth";
 import { fail, ok } from "@/lib/http";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
@@ -25,13 +26,16 @@ export async function GET(request: NextRequest) {
 
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
 
-  if (!oauthClientId || !oauthClientSecret || !siteUrl) {
+  if (!oauthClientId || !oauthClientSecret) {
     return fail("GBP OAuth environment is not configured", 503);
   }
 
-  const redirectUri = `${siteUrl}/api/v1/gbp/oauth/callback`;
+  const redirectUri = resolveGoogleOAuthRedirectUri({
+    callbackPath: "/api/v1/gbp/oauth/callback",
+    operation: "GBP authorization URL generation",
+    envVarNames: ["GBP_GOOGLE_OAUTH_REDIRECT_URI", "GOOGLE_OAUTH_REDIRECT_URI"]
+  });
   const authUrl = buildGbpOAuthUrl(
     {
       clientId: oauthClientId,

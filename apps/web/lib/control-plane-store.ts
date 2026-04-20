@@ -133,6 +133,7 @@ interface Store {
   contentArtifacts: Map<string, ContentArtifact>;
   incidentMeetConnections: Map<string, IncidentMeetConnection>;
   incidentMeetEvents: Map<string, IncidentMeetEvent>;
+  incidentMeetSettings: Map<string, IncidentMeetSettings>;
   attribution: DailyChannelMetric[];
 }
 
@@ -155,6 +156,7 @@ export interface ContentArtifact {
 export interface IncidentMeetConnection {
   id: string;
   organizationId: string;
+  userId: string | null;
   senderEmail: string;
   encryptedTokenPayload: Record<string, unknown>;
   scopes: string[];
@@ -181,6 +183,19 @@ export interface IncidentMeetEvent {
   attendees: string[];
   createdBy: string | null;
   createdAt: string;
+}
+
+export interface IncidentMeetRecipientOption {
+  email: string;
+  role: string;
+}
+
+export interface IncidentMeetSettings {
+  organizationId: string;
+  selectedUserEmails: string[];
+  externalEmails: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 const globalStore = globalThis as typeof globalThis & {
@@ -223,6 +238,7 @@ function getStore(): Store {
       contentArtifacts: new Map(),
       incidentMeetConnections: new Map(),
       incidentMeetEvents: new Map(),
+      incidentMeetSettings: new Map(),
       attribution: []
     };
   }
@@ -463,6 +479,7 @@ function mapIncidentMeetConnectionRow(row: Record<string, unknown>): IncidentMee
   return {
     id: String(row.id),
     organizationId: String(row.organization_id),
+    userId: typeof row.user_id === "string" ? row.user_id : null,
     senderEmail: String(row.sender_email ?? ""),
     encryptedTokenPayload: (row.encrypted_token_payload as Record<string, unknown> | null) ?? {},
     scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
@@ -491,6 +508,16 @@ function mapIncidentMeetEventRow(row: Record<string, unknown>): IncidentMeetEven
     attendees: Array.isArray(row.attendees) ? row.attendees.map(String) : [],
     createdBy: typeof row.created_by === "string" ? row.created_by : null,
     createdAt: String(row.created_at ?? nowIso())
+  };
+}
+
+function mapIncidentMeetSettingsRow(row: Record<string, unknown>): IncidentMeetSettings {
+  return {
+    organizationId: String(row.organization_id),
+    selectedUserEmails: Array.isArray(row.selected_user_emails) ? row.selected_user_emails.map(String) : [],
+    externalEmails: Array.isArray(row.external_emails) ? row.external_emails.map(String) : [],
+    createdAt: String(row.created_at ?? nowIso()),
+    updatedAt: String(row.updated_at ?? row.created_at ?? nowIso())
   };
 }
 
@@ -631,16 +658,136 @@ export async function listOrganizations(input?: { userId?: string }): Promise<Or
   return (orgRows ?? []).map((row) => mapOrganizationRow(row as Record<string, unknown>));
 }
 
-export async function getIncidentMeetConnection(organizationId: string): Promise<IncidentMeetConnection | null> {
+export async function listOrganizationUserEmails(organizationId: string): Promise<IncidentMeetRecipientOption[]> {
   if (!isSupabaseConfigured()) {
-    return [...getStore().incidentMeetConnections.values()].find((connection) => connection.organizationId === organizationId) ?? null;
+    return [{
+      email: "bishop@truerankdigital.com",
+      role: "owner"
+    }, {
+      email: "jose@truerankdigital.com",
+      role: "owner"
+    }, {
+      email: "jon@truerankdigital.com",
+      role: "owner"
+    }, {
+      email: "eric@truerankdigital.com",
+      role: "owner"
+    }, {
+      email: "jesse@truerankdigital.com",
+      role: "owner"
+    }];
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: memberships, error } = await supabase
+    .from("organization_users")
+    .select("user_id, role")
+    .eq("organization_id", organizationId);
+  if (error) {
+    throw new Error(`Failed to load organization recipients: ${error.message}`);
+  }
+
+  const rows = await Promise.all(
+    (memberships ?? []).map(async (membership) => {
+      const userId = typeof membership.user_id === "string" ? membership.user_id : "";
+      if (!userId) {
+        return null;
+      }
+
+      const result = await supabase.auth.admin.getUserById(userId);
+      if (result.error || !result.data.user?.email) {
+        return null;
+      }
+
+      return {
+        email: result.data.user.email.toLowerCase(),
+        role: typeof membership.role === "string" ? membership.role : "client_viewer"
+      } satisfies IncidentMeetRecipientOption;
+    })
+  );
+
+  const seen = new Set<string>();
+  return rows
+    .filter((row): row is IncidentMeetRecipientOption => Boolean(row))
+    .filter((row) => {
+      if (seen.has(row.email)) {
+        return false;
+      }
+      seen.add(row.email);
+      return true;
+    })
+    .sort((left, right) => left.email.localeCompare(right.email));
+}
+
+export async function getIncidentMeetSettings(organizationId: string): Promise<IncidentMeetSettings | null> {
+  if (!isSupabaseConfigured()) {
+    return getStore().incidentMeetSettings.get(organizationId) ?? null;
   }
 
   const { data, error } = await getSupabaseServiceClient()
-    .from("incident_meet_connections")
-    .select("id,organization_id,sender_email,encrypted_token_payload,scopes,metadata,token_expires_at,connected_at,last_refresh_at,created_at,updated_at")
+    .from("incident_meet_settings")
+    .select("organization_id,selected_user_emails,external_emails,created_at,updated_at")
     .eq("organization_id", organizationId)
     .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load incident meet settings: ${error.message}`);
+  }
+
+  return data ? mapIncidentMeetSettingsRow(data as Record<string, unknown>) : null;
+}
+
+export async function upsertIncidentMeetSettings(input: {
+  organizationId: string;
+  selectedUserEmails: string[];
+  externalEmails: string[];
+}): Promise<IncidentMeetSettings> {
+  if (!isSupabaseConfigured()) {
+    const existing = getStore().incidentMeetSettings.get(input.organizationId);
+    const next: IncidentMeetSettings = {
+      organizationId: input.organizationId,
+      selectedUserEmails: input.selectedUserEmails,
+      externalEmails: input.externalEmails,
+      createdAt: existing?.createdAt ?? nowIso(),
+      updatedAt: nowIso()
+    };
+    getStore().incidentMeetSettings.set(input.organizationId, next);
+    return next;
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("incident_meet_settings")
+    .upsert(
+      {
+        organization_id: input.organizationId,
+        selected_user_emails: input.selectedUserEmails,
+        external_emails: input.externalEmails
+      },
+      { onConflict: "organization_id" }
+    )
+    .select("organization_id,selected_user_emails,external_emails,created_at,updated_at")
+    .single();
+  if (error || !data) {
+    throw new Error(`Failed to save incident meet settings: ${error?.message ?? "unknown error"}`);
+  }
+
+  return mapIncidentMeetSettingsRow(data as Record<string, unknown>);
+}
+
+export async function getIncidentMeetConnection(organizationId: string, userId?: string | null): Promise<IncidentMeetConnection | null> {
+  if (!isSupabaseConfigured()) {
+    return [...getStore().incidentMeetConnections.values()].find(
+      (connection) => connection.organizationId === organizationId && (!userId || connection.userId === userId)
+    ) ?? null;
+  }
+
+  let query = getSupabaseServiceClient()
+    .from("incident_meet_connections")
+    .select("id,organization_id,user_id,sender_email,encrypted_token_payload,scopes,metadata,token_expires_at,connected_at,last_refresh_at,created_at,updated_at")
+    .eq("organization_id", organizationId);
+  if (userId) {
+    query = query.eq("user_id", userId);
+  }
+  const { data, error } = await query.maybeSingle();
   if (error) {
     throw new Error(`Failed to load incident meet connection: ${error.message}`);
   }
@@ -650,6 +797,7 @@ export async function getIncidentMeetConnection(organizationId: string): Promise
 
 export async function upsertIncidentMeetConnection(input: {
   organizationId: string;
+  userId: string;
   senderEmail: string;
   encryptedTokenPayload: Record<string, unknown>;
   scopes: string[];
@@ -659,10 +807,13 @@ export async function upsertIncidentMeetConnection(input: {
 }): Promise<IncidentMeetConnection> {
   if (!isSupabaseConfigured()) {
     const store = getStore();
-    const existing = [...store.incidentMeetConnections.values()].find((connection) => connection.organizationId === input.organizationId);
+    const existing = [...store.incidentMeetConnections.values()].find(
+      (connection) => connection.organizationId === input.organizationId && connection.userId === input.userId
+    );
     const next: IncidentMeetConnection = {
       id: existing?.id ?? randomUUID(),
       organizationId: input.organizationId,
+      userId: input.userId,
       senderEmail: input.senderEmail,
       encryptedTokenPayload: input.encryptedTokenPayload,
       scopes: input.scopes,
@@ -682,6 +833,7 @@ export async function upsertIncidentMeetConnection(input: {
     .upsert(
       {
         organization_id: input.organizationId,
+        user_id: input.userId,
         sender_email: input.senderEmail,
         encrypted_token_payload: input.encryptedTokenPayload,
         scopes: input.scopes,
@@ -689,9 +841,9 @@ export async function upsertIncidentMeetConnection(input: {
         token_expires_at: input.tokenExpiresAt ?? null,
         last_refresh_at: input.lastRefreshAt ?? null
       },
-      { onConflict: "organization_id" }
+      { onConflict: "organization_id,user_id" }
     )
-    .select("id,organization_id,sender_email,encrypted_token_payload,scopes,metadata,token_expires_at,connected_at,last_refresh_at,created_at,updated_at")
+    .select("id,organization_id,user_id,sender_email,encrypted_token_payload,scopes,metadata,token_expires_at,connected_at,last_refresh_at,created_at,updated_at")
     .single();
   if (error || !data) {
     throw new Error(`Failed to upsert incident meet connection: ${error?.message ?? "unknown error"}`);

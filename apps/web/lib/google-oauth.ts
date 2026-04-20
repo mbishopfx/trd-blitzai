@@ -48,6 +48,26 @@ function requireRedirectUri(redirectUri: string | null | undefined, operation: s
   return normalized;
 }
 
+export function resolveGoogleOAuthRedirectUri(input: {
+  callbackPath: string;
+  operation: string;
+  envVarNames?: string[];
+}): string {
+  for (const envVarName of input.envVarNames ?? []) {
+    const configured = process.env[envVarName]?.trim();
+    if (configured) {
+      return configured;
+    }
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!siteUrl) {
+    throw new Error(`Google OAuth redirect URI is required for ${input.operation}`);
+  }
+
+  return new URL(input.callbackPath, siteUrl).toString();
+}
+
 export function encodeGoogleOAuthState(state: GoogleOAuthState): string {
   return Buffer.from(JSON.stringify(state), "utf8").toString("base64url");
 }

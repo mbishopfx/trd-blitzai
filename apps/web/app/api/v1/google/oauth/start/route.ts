@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getRequestContext, hasRole } from "@/lib/auth";
-import { buildGoogleOAuthUrl, type GoogleIntegrationProvider } from "@/lib/google-oauth";
+import { buildGoogleOAuthUrl, resolveGoogleOAuthRedirectUri, type GoogleIntegrationProvider } from "@/lib/google-oauth";
 import { fail, ok } from "@/lib/http";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
@@ -31,12 +31,15 @@ export async function GET(request: NextRequest) {
 
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (!oauthClientId || !oauthClientSecret || !siteUrl) {
+  if (!oauthClientId || !oauthClientSecret) {
     return fail("Google OAuth environment is not configured", 503);
   }
 
-  const redirectUri = `${siteUrl}/api/v1/google/oauth/callback`;
+  const redirectUri = resolveGoogleOAuthRedirectUri({
+    callbackPath: "/api/v1/google/oauth/callback",
+    operation: "google integration authorization URL generation",
+    envVarNames: ["GOOGLE_INTEGRATION_OAUTH_REDIRECT_URI"]
+  });
   const authUrl = buildGoogleOAuthUrl({
     clientId: oauthClientId,
     redirectUri,

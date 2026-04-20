@@ -6,12 +6,14 @@ import { refreshGoogleAccessToken } from "./google-oauth";
 import {
   INCIDENT_MEET_ATTENDEES,
   INCIDENT_MEET_SENDER_EMAIL,
+  normalizeIncidentMeetEmails,
   type IncidentSeverity
 } from "./incident-meet-shared";
 
 export {
   INCIDENT_MEET_ATTENDEES,
-  INCIDENT_MEET_SENDER_EMAIL
+  INCIDENT_MEET_SENDER_EMAIL,
+  normalizeIncidentMeetEmails
 } from "./incident-meet-shared";
 export type { IncidentSeverity } from "./incident-meet-shared";
 

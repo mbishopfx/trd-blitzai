@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { upsertIncidentMeetConnection } from "@/lib/control-plane-store";
-import { exchangeGoogleCodeForToken } from "@/lib/google-oauth";
+import { exchangeGoogleCodeForToken, resolveGoogleOAuthRedirectUri } from "@/lib/google-oauth";
 import {
   decodeIncidentMeetState,
   encodeStoredGoogleToken,
-  fetchGoogleAccountEmail,
-  INCIDENT_MEET_SENDER_EMAIL
+  fetchGoogleAccountEmail
 } from "@/lib/incident-meet";
 import { fail } from "@/lib/http";
 
@@ -22,13 +21,20 @@ export async function GET(request: NextRequest) {
 
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (!oauthClientId || !oauthClientSecret || !siteUrl) {
+  if (!oauthClientId || !oauthClientSecret) {
     return fail("Google OAuth environment is not configured", 503);
   }
 
   const state = decodeIncidentMeetState(stateRaw);
-  const redirectUri = `${siteUrl}/api/v1/incident-meets/google/callback`;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!siteUrl) {
+    return fail("Google OAuth environment is not configured", 503);
+  }
+  const redirectUri = resolveGoogleOAuthRedirectUri({
+    callbackPath: "/api/v1/incident-meets/google/callback",
+    operation: "incident meet authorization code exchange",
+    envVarNames: ["INCIDENT_MEET_GOOGLE_OAUTH_REDIRECT_URI"]
+  });
   const tokenSet = await exchangeGoogleCodeForToken({
     clientId: oauthClientId,
     clientSecret: oauthClientSecret,
@@ -39,13 +45,9 @@ export async function GET(request: NextRequest) {
   const senderEmail = (await fetchGoogleAccountEmail(tokenSet.accessToken)).toLowerCase();
   const redirectUrl = new URL(state.returnPath, siteUrl);
 
-  if (senderEmail !== INCIDENT_MEET_SENDER_EMAIL) {
-    redirectUrl.searchParams.set("incident_meet_error", `Connect ${INCIDENT_MEET_SENDER_EMAIL} to use incident meetings.`);
-    return NextResponse.redirect(redirectUrl);
-  }
-
   await upsertIncidentMeetConnection({
     organizationId: state.organizationId,
+    userId: state.userId,
     senderEmail,
     encryptedTokenPayload: encodeStoredGoogleToken({
       accessToken: tokenSet.accessToken,
@@ -55,6 +57,7 @@ export async function GET(request: NextRequest) {
     scopes: tokenSet.scopes,
     metadata: {
       provider: "google_calendar",
+      connectedByUserId: state.userId,
       connectedAt: new Date().toISOString()
     },
     tokenExpiresAt: tokenSet.expiresAt

@@ -3,6 +3,7 @@ import { getRequestContext, hasRole } from "@/lib/auth";
 import {
   buildIncidentMeetOAuthUrl
 } from "@/lib/incident-meet";
+import { resolveGoogleOAuthRedirectUri } from "@/lib/google-oauth";
 import { fail, ok } from "@/lib/http";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
@@ -26,13 +27,16 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (!oauthClientId || !oauthClientSecret || !siteUrl) {
+  if (!oauthClientId || !oauthClientSecret) {
     return fail("Google OAuth environment is not configured", 503);
   }
 
   const returnPath = request.nextUrl.searchParams.get("returnPath") ?? "/dashboard/incidents";
-  const redirectUri = `${siteUrl}/api/v1/incident-meets/google/callback`;
+  const redirectUri = resolveGoogleOAuthRedirectUri({
+    callbackPath: "/api/v1/incident-meets/google/callback",
+    operation: "incident meet authorization URL generation",
+    envVarNames: ["INCIDENT_MEET_GOOGLE_OAUTH_REDIRECT_URI"]
+  });
   const authUrl = buildIncidentMeetOAuthUrl({
     clientId: oauthClientId,
     redirectUri,

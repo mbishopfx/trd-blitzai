@@ -4,6 +4,7 @@ import { encryptJson } from "@/lib/crypto";
 import {
   decodeGoogleOAuthState,
   exchangeGoogleCodeForToken,
+  resolveGoogleOAuthRedirectUri,
   type GoogleIntegrationProvider
 } from "@/lib/google-oauth";
 import { fail } from "@/lib/http";
@@ -129,13 +130,20 @@ export async function GET(request: NextRequest) {
 
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (!oauthClientId || !oauthClientSecret || !siteUrl) {
+  if (!oauthClientId || !oauthClientSecret) {
     return fail("Google OAuth environment is not configured", 503);
   }
 
   const state = decodeGoogleOAuthState(stateRaw);
-  const redirectUri = `${siteUrl}/api/v1/google/oauth/callback`;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!siteUrl) {
+    return fail("Google OAuth environment is not configured", 503);
+  }
+  const redirectUri = resolveGoogleOAuthRedirectUri({
+    callbackPath: "/api/v1/google/oauth/callback",
+    operation: "google integration authorization code exchange",
+    envVarNames: ["GOOGLE_INTEGRATION_OAUTH_REDIRECT_URI"]
+  });
   const tokenSet = await exchangeGoogleCodeForToken({
     clientId: oauthClientId,
     clientSecret: oauthClientSecret,

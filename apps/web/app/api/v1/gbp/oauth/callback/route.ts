@@ -2,6 +2,7 @@ import { decodeOAuthState, exchangeCodeForToken, GbpApiClient } from "@trd-aibli
 import { NextRequest, NextResponse } from "next/server";
 import { connectIntegration, createClient } from "@/lib/control-plane-store";
 import { encryptJson } from "@/lib/crypto";
+import { resolveGoogleOAuthRedirectUri } from "@/lib/google-oauth";
 import { fail } from "@/lib/http";
 import { getSupabaseServiceClient } from "@/lib/supabase";
 
@@ -44,13 +45,20 @@ export async function GET(request: NextRequest) {
 
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET?.trim();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (!oauthClientId || !oauthClientSecret || !siteUrl) {
+  if (!oauthClientId || !oauthClientSecret) {
     return fail("GBP OAuth environment is not configured", 503);
   }
 
   const state = decodeOAuthState(stateRaw);
-  const redirectUri = `${siteUrl}/api/v1/gbp/oauth/callback`;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!siteUrl) {
+    return fail("GBP OAuth environment is not configured", 503);
+  }
+  const redirectUri = resolveGoogleOAuthRedirectUri({
+    callbackPath: "/api/v1/gbp/oauth/callback",
+    operation: "GBP authorization code exchange",
+    envVarNames: ["GBP_GOOGLE_OAUTH_REDIRECT_URI", "GOOGLE_OAUTH_REDIRECT_URI"]
+  });
 
   const tokenSet = await exchangeCodeForToken(
     {

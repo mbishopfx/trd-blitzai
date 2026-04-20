@@ -17,6 +17,10 @@
   - `CLIENT_MEDIA_MAX_BYTES` (optional, defaults to 52428800 / 50MB)
   - `GOOGLE_OAUTH_CLIENT_ID`
   - `GOOGLE_OAUTH_CLIENT_SECRET`
+  - `GOOGLE_OAUTH_REDIRECT_URI` (optional GBP callback override)
+  - `GBP_GOOGLE_OAUTH_REDIRECT_URI` (optional GBP callback override)
+  - `GOOGLE_INTEGRATION_OAUTH_REDIRECT_URI` (optional `/api/v1/google/oauth/callback` override)
+  - `INCIDENT_MEET_GOOGLE_OAUTH_REDIRECT_URI` (optional `/api/v1/incident-meets/google/callback` override)
   - `REDIS_URL`
 
 ## Railway (apps/worker-ts)
