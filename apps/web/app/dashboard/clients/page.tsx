@@ -21,14 +21,6 @@ import {
   EmptyMedia,
   EmptyTitle
 } from "@/components/ui/empty";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from "@/components/ui/table";
 
 interface ClientRecord {
   id: string;
@@ -300,55 +292,73 @@ export default function ClientsPage() {
         </CardHeader>
         <CardContent>
           {clients.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Primary Location</TableHead>
-                  <TableHead>Timezone</TableHead>
-                  <TableHead>Website</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Workspace</TableHead>
-                  <TableHead>SEO Intel</TableHead>
-                  <TableHead>Control</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {clients.map((client) => (
-                  <TableRow key={client.id}>
-                    <TableCell className="font-medium">{client.name}</TableCell>
-                    <TableCell>{client.primaryLocationLabel ?? "Not set"}</TableCell>
-                    <TableCell>{client.timezone}</TableCell>
-                    <TableCell>{client.websiteUrl ?? "Missing"}</TableCell>
-                    <TableCell>{formatDate(client.createdAt)}</TableCell>
-                    <TableCell>
+            <div className="flex flex-col gap-3">
+              {clients.map((client) => (
+                <div
+                  key={client.id}
+                  className="rounded-2xl border border-border/80 bg-card/85 p-4 shadow-sm"
+                >
+                  <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto] xl:items-start">
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-base font-semibold">{client.name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {client.primaryLocationLabel ?? "Primary location not set"}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="secondary">{client.timezone}</Badge>
+                        <Badge variant="outline">
+                          Created {formatDate(client.createdAt)}
+                        </Badge>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                      <div className="rounded-xl border border-border/80 bg-muted/35 p-3">
+                        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                          Website
+                        </p>
+                        <p className="mt-2 break-all text-sm">
+                          {client.websiteUrl ?? "Missing website URL"}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-border/80 bg-muted/35 p-3">
+                        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                          Workspace status
+                        </p>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          Blitz controls and Apify SEO workspace are ready from this row.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 xl:min-w-[170px]">
                       <Button
                         render={<Link href={`/dashboard/clients/${client.id}`} />}
                         variant="outline"
                         size="sm"
+                        className="w-full"
                       >
-                        Open
+                        Open Workspace
                       </Button>
-                    </TableCell>
-                    <TableCell>
                       <Button
                         render={<Link href={`/dashboard/clients/${client.id}/apify`} />}
                         variant="ghost"
                         size="sm"
+                        className="w-full"
                       >
                         <Sparkles data-icon="inline-start" />
                         Apify SEO
                       </Button>
-                    </TableCell>
-                    <TableCell>
-                      <Button variant="destructive" size="sm" onClick={() => void deleteClient(client)}>
-                        Remove
+                      <Button variant="destructive" size="sm" className="w-full" onClick={() => void deleteClient(client)}>
+                        Remove Client
                       </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <Empty className="border border-dashed border-border/80">
               <EmptyHeader>

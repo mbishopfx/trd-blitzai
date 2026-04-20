@@ -148,7 +148,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider defaultOpen>
-      <Sidebar variant="inset" collapsible="icon" className="border-r border-sidebar-border/80">
+      <Sidebar variant="inset" collapsible="offcanvas" className="border-r border-sidebar-border/80">
         <SidebarHeader className="gap-3 border-b border-sidebar-border/80">
           <div className="rounded-xl border border-sidebar-border/80 bg-sidebar-accent/40 p-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
