@@ -999,6 +999,92 @@ export async function listClientsForOrg(organizationId: string): Promise<Client[
   return (rows ?? []).map((row) => mapClientRow(row as Record<string, unknown>));
 }
 
+export async function listPendingReviewAlertCountsForOrg(
+  organizationId: string
+): Promise<Record<string, number>> {
+  if (!isSupabaseConfigured()) {
+    const counts: Record<string, number> = {};
+    for (const item of getStore().actionsNeeded.values()) {
+      if (
+        item.organizationId === organizationId &&
+        item.status === "pending" &&
+        item.actionType === "review_reply"
+      ) {
+        counts[item.clientId] = (counts[item.clientId] ?? 0) + 1;
+      }
+    }
+    return counts;
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: rows, error } = await supabase
+    .from("client_actions_needed")
+    .select("client_id")
+    .eq("organization_id", organizationId)
+    .eq("status", "pending")
+    .eq("action_type", "review_reply");
+  if (error) {
+    throw new Error(`Failed to list pending review alert counts: ${error.message}`);
+  }
+
+  return (rows ?? []).reduce<Record<string, number>>((acc, row) => {
+    const clientId = typeof row.client_id === "string" ? row.client_id : "";
+    if (!clientId) {
+      return acc;
+    }
+    acc[clientId] = (acc[clientId] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+export async function getClientWorkspaceAlertSummary(clientId: string): Promise<{
+  pendingActionsNeededCount: number;
+  pendingReviewReplyCount: number;
+}> {
+  if (!isSupabaseConfigured()) {
+    let pendingActionsNeededCount = 0;
+    let pendingReviewReplyCount = 0;
+    for (const item of getStore().actionsNeeded.values()) {
+      if (item.clientId !== clientId || item.status !== "pending") {
+        continue;
+      }
+      pendingActionsNeededCount += 1;
+      if (item.actionType === "review_reply") {
+        pendingReviewReplyCount += 1;
+      }
+    }
+    return { pendingActionsNeededCount, pendingReviewReplyCount };
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const [{ count: pendingActionsNeededCount, error: pendingError }, { count: pendingReviewReplyCount, error: reviewError }] =
+    await Promise.all([
+      supabase
+        .from("client_actions_needed")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", clientId)
+        .eq("status", "pending"),
+      supabase
+        .from("client_actions_needed")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", clientId)
+        .eq("status", "pending")
+        .eq("action_type", "review_reply")
+    ]);
+
+  if (pendingError) {
+    throw new Error(`Failed to load pending actions-needed summary: ${pendingError.message}`);
+  }
+  if (reviewError) {
+    throw new Error(`Failed to load pending review alert summary: ${reviewError.message}`);
+  }
+
+  return {
+    pendingActionsNeededCount: pendingActionsNeededCount ?? 0,
+    pendingReviewReplyCount: pendingReviewReplyCount ?? 0
+  };
+}
+
 export async function getClientById(clientId: string): Promise<Client | null> {
   if (!isSupabaseConfigured()) {
     return getStore().clients.get(clientId) ?? null;

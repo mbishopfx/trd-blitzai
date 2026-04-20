@@ -1,7 +1,13 @@
 import type { BlitzAction } from "@trd-aiblitz/domain";
 import { NextRequest } from "next/server";
 import { getRequestContext, hasRole } from "@/lib/auth";
-import { deleteClientById, getClientById, listClientRuns, listRunActions } from "@/lib/control-plane-store";
+import {
+  deleteClientById,
+  getClientById,
+  getClientWorkspaceAlertSummary,
+  listClientRuns,
+  listRunActions
+} from "@/lib/control-plane-store";
 import { fail, ok } from "@/lib/http";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
@@ -58,7 +64,10 @@ export async function GET(request: NextRequest, { params }: Params) {
     return fail("Forbidden", 403);
   }
 
-  const runs = await listClientRuns(client.id, { limit: 15 });
+  const [runs, workspaceAlerts] = await Promise.all([
+    listClientRuns(client.id, { limit: 15 }),
+    getClientWorkspaceAlertSummary(client.id)
+  ]);
   const latestRun = runs[0] ?? null;
   const latestRunActions = latestRun ? await listRunActions(latestRun.id) : [];
 
@@ -73,6 +82,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   return ok({
     client,
     workerStatus,
+    workspaceAlerts,
     latestRun,
     latestRunActionSummary: summarizeActions(latestRunActions),
     recentRuns: runs

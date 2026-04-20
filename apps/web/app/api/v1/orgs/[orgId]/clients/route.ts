@@ -1,7 +1,7 @@
 import { createClientSchema } from "@trd-aiblitz/domain";
 import { NextRequest } from "next/server";
 import { getRequestContext, hasRole } from "@/lib/auth";
-import { createClient, listClientsForOrg } from "@/lib/control-plane-store";
+import { createClient, listClientsForOrg, listPendingReviewAlertCountsForOrg } from "@/lib/control-plane-store";
 import { fail, ok } from "@/lib/http";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
@@ -51,5 +51,15 @@ export async function GET(request: NextRequest, { params }: Params) {
     }
   }
 
-  return ok({ clients: await listClientsForOrg(params.orgId) });
+  const [clients, pendingReviewAlertCounts] = await Promise.all([
+    listClientsForOrg(params.orgId),
+    listPendingReviewAlertCountsForOrg(params.orgId)
+  ]);
+
+  return ok({
+    clients: clients.map((client) => ({
+      ...client,
+      pendingReviewReplyCount: pendingReviewAlertCounts[client.id] ?? 0
+    }))
+  });
 }

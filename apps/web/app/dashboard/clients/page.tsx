@@ -30,6 +30,7 @@ interface ClientRecord {
   websiteUrl: string | null;
   primaryLocationLabel: string | null;
   createdAt: string;
+  pendingReviewReplyCount: number;
 }
 
 interface OAuthStartResponse {
@@ -104,7 +105,9 @@ export default function ClientsPage() {
   const workspaceStats = useMemo(
     () => ({
       websites: clients.filter((client) => Boolean(client.websiteUrl)).length,
-      locations: clients.filter((client) => Boolean(client.primaryLocationLabel)).length
+      locations: clients.filter((client) => Boolean(client.primaryLocationLabel)).length,
+      clientsNeedingReplies: clients.filter((client) => client.pendingReviewReplyCount > 0).length,
+      totalPendingReviewReplies: clients.reduce((sum, client) => sum + (client.pendingReviewReplyCount ?? 0), 0)
     }),
     [clients]
   );
@@ -274,11 +277,13 @@ export default function ClientsPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription>Locations Ready</CardDescription>
-            <CardTitle>{workspaceStats.locations}</CardTitle>
+            <CardDescription>Review Alerts</CardDescription>
+            <CardTitle>{workspaceStats.totalPendingReviewReplies}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">Clients with a location label available for local SEO lookups.</p>
+            <p className="text-sm text-muted-foreground">
+              {workspaceStats.clientsNeedingReplies} client workspace{workspaceStats.clientsNeedingReplies === 1 ? "" : "s"} currently need review replies.
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -311,6 +316,11 @@ export default function ClientsPage() {
                         <Badge variant="outline">
                           Created {formatDate(client.createdAt)}
                         </Badge>
+                        {client.pendingReviewReplyCount > 0 ? (
+                          <Badge variant="destructive">
+                            {client.pendingReviewReplyCount} review alert{client.pendingReviewReplyCount === 1 ? "" : "s"}
+                          </Badge>
+                        ) : null}
                       </div>
                     </div>
 
@@ -327,9 +337,15 @@ export default function ClientsPage() {
                         <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
                           Workspace status
                         </p>
-                        <p className="mt-2 text-sm text-muted-foreground">
-                          Blitz controls and Apify SEO workspace are ready from this row.
-                        </p>
+                        {client.pendingReviewReplyCount > 0 ? (
+                          <p className="mt-2 text-sm text-foreground">
+                            {client.pendingReviewReplyCount} live review repl{client.pendingReviewReplyCount === 1 ? "y is" : "ies are"} waiting in this workspace.
+                          </p>
+                        ) : (
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            Blitz controls and Apify SEO workspace are ready from this row.
+                          </p>
+                        )}
                       </div>
                     </div>
 

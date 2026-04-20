@@ -9,6 +9,7 @@ import { DefaultBlitzPlanner } from "./planner";
 import { startBlitzWorker } from "./queue";
 import { InMemoryBlitzRepository } from "./repository/in-memory";
 import { SupabaseBlitzRepository } from "./repository/supabase";
+import { startReviewAlertRefreshWorker } from "./review-alert-refresh";
 import { startScheduledContentDispatcher } from "./scheduled-content";
 import { getSupabaseServiceClient, isSupabaseConfigured } from "./supabase";
 import type { ActionExecutor, BlitzRunRepository } from "./types";
@@ -99,6 +100,18 @@ async function main(): Promise<void> {
       logger.info("scheduled content dispatcher enabled");
     } else {
       logger.info("scheduled content dispatcher disabled (set SCHEDULED_CONTENT_DISPATCHER_ENABLED=true to enable)");
+    }
+
+    const reviewAlertRefreshEnabled = (process.env.REVIEW_ALERT_REFRESH_ENABLED ?? "true").trim().toLowerCase() === "true";
+    if (reviewAlertRefreshEnabled && isSupabaseConfigured()) {
+      startReviewAlertRefreshWorker({
+        supabase: getSupabaseServiceClient(),
+        intervalMs: Number(process.env.REVIEW_ALERT_REFRESH_MS ?? "1800000"),
+        batchSize: Number(process.env.REVIEW_ALERT_REFRESH_BATCH_SIZE ?? "500")
+      });
+      logger.info("review alert refresh worker enabled");
+    } else {
+      logger.info("review alert refresh worker disabled");
     }
     return;
   }

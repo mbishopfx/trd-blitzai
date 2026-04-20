@@ -57,6 +57,10 @@ interface IntegrationRecord {
 interface DetailPayload {
   client: ClientDetail;
   workerStatus: "active" | "idle" | "error";
+  workspaceAlerts: {
+    pendingActionsNeededCount: number;
+    pendingReviewReplyCount: number;
+  };
   latestRun: BlitzRunRecord | null;
   latestRunActionSummary: {
     attempted: number;
@@ -159,6 +163,11 @@ export default function ClientOverviewPage() {
               Blitz Worker {payload?.workerStatus ?? (loading ? "loading" : "idle")}
             </Badge>
             <Badge variant="outline">{integrations.length} integrations</Badge>
+            {payload?.workspaceAlerts.pendingReviewReplyCount ? (
+              <Badge variant="destructive">
+                {payload.workspaceAlerts.pendingReviewReplyCount} review repl{payload.workspaceAlerts.pendingReviewReplyCount === 1 ? "y alert" : "y alerts"}
+              </Badge>
+            ) : null}
             {payload?.client.primaryLocationLabel ? (
               <Badge variant="outline">{payload.client.primaryLocationLabel}</Badge>
             ) : null}
@@ -217,6 +226,17 @@ export default function ClientOverviewPage() {
           <CardContent>
             <p className="text-sm text-muted-foreground">
               Started: {formatDate(payload?.latestRun?.startedAt ?? null)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardDescription>Reply Alerts</CardDescription>
+            <CardTitle>{payload?.workspaceAlerts.pendingReviewReplyCount ?? 0}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              New GBP reviews without replies surface here and on the Actions Needed tab.
             </p>
           </CardContent>
         </Card>
