@@ -4,7 +4,21 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
-import styles from "../../../_components/dashboard.module.css";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 type PostToolMode = "single" | "spawn3";
 
@@ -99,6 +113,23 @@ function formatDate(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
+function formatUrlLabel(value: string): string {
+  try {
+    const parsed = new URL(value);
+    const path = parsed.pathname === "/" ? "" : parsed.pathname;
+    return `${parsed.hostname}${path}${parsed.search}`;
+  } catch {
+    return value;
+  }
+}
+
+function statTone(count: number): "secondary" | "outline" | "destructive" {
+  if (count > 0) {
+    return "secondary";
+  }
+  return "outline";
+}
+
 export default function ClientPostToolPage() {
   const { clientId } = useParams<{ clientId: string }>();
   const { request } = useDashboardContext();
@@ -114,6 +145,7 @@ export default function ClientPostToolPage() {
   const [scheduledDispatcherExpected, setScheduledDispatcherExpected] = useState(true);
   const [persistedArtifacts, setPersistedArtifacts] = useState<SitemapPayload["postToolArtifacts"]>([]);
   const [allowedAssets, setAllowedAssets] = useState<SitemapPayload["allowedAssets"]>([]);
+  const [urlFilter, setUrlFilter] = useState("");
   const [singleUrl, setSingleUrl] = useState("");
   const [spawn3Selection, setSpawn3Selection] = useState<string[]>([]);
   const [submitPreview, setSubmitPreview] = useState<QueueResponse | null>(null);
@@ -155,6 +187,13 @@ export default function ClientPostToolPage() {
   useEffect(load, [clientId, request]);
 
   const queuedSet = useMemo(() => new Set(queuedLandingUrls.map((url) => url.toLowerCase())), [queuedLandingUrls]);
+  const filteredSitemapUrls = useMemo(() => {
+    const query = urlFilter.trim().toLowerCase();
+    if (!query) {
+      return sitemapUrls;
+    }
+    return sitemapUrls.filter((url) => url.toLowerCase().includes(query));
+  }, [sitemapUrls, urlFilter]);
 
   const effectiveSelection = useMemo(() => {
     if (mode === "single") {
@@ -255,203 +294,409 @@ export default function ClientPostToolPage() {
   };
 
   return (
-    <>
-      <section className={styles.hero}>
-        <h2 className={styles.heroTitle}>Isolated GBP Post Tool</h2>
-        <p className={styles.heroSubtitle}>
-          Queue single manual posts or spawn a 3-post sequence one day apart. This uses the same TinyURL + QR media pipeline as the Blitz post worker.
-        </p>
-        <ClientTabs clientId={clientId} />
-        <div className={styles.kpiRow}>
-          <span className={styles.badge}>Sitemap URLs {sitemapUrls.length}</span>
-          <span className={styles.badge}>Queued URLs {queuedLandingUrls.length}</span>
-          <span className={styles.badge}>Due Now {dueScheduledCount}</span>
-          <span className={styles.badge}>Allowed Assets {allowedAssets.length}</span>
-        </div>
-        {scheduledDispatcherExpected ? (
-          <span className={`${styles.badge} ${styles.statusIdle}`}>
-            Posts dispatch automatically from the Railway worker scheduler. Use Push Now to force immediate dispatch eligibility.
-          </span>
-        ) : null}
-        {status ? <span className={`${styles.badge} ${styles.statusActive}`}>{status}</span> : null}
-        {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
-      </section>
+    <div className="flex flex-col gap-6">
+      <Card className="border-border/70 bg-card/90 shadow-sm">
+        <CardHeader className="space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">Post Tool</Badge>
+                <Badge variant="outline">{sitemapUrls.length} sitemap URLs</Badge>
+                <Badge variant="outline">{queuedLandingUrls.length} queued</Badge>
+                <Badge variant={statTone(dueScheduledCount)}>{dueScheduledCount} due now</Badge>
+                <Badge variant="outline">{allowedAssets.length} assets</Badge>
+              </div>
+              <CardTitle className="text-3xl">Isolated GBP Post Tool</CardTitle>
+              <CardDescription className="max-w-3xl text-base">
+                Queue one-off GBP posts or a 3-post sequence with a cleaner preview flow. The worker still handles dispatch, QR media, and duplicate protection.
+              </CardDescription>
+            </div>
 
-      <section className={styles.grid}>
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Run Config</h3>
-          </header>
-          <div className={styles.stack}>
-            <label className={styles.field}>
-              <span className={styles.label}>Mode</span>
-              <select
-                className={styles.select}
-                value={mode}
-                onChange={(event) => setMode(event.target.value === "spawn3" ? "spawn3" : "single")}
-                disabled={busy}
-              >
-                <option value="single">Single Post</option>
-                <option value="spawn3">Spawn 3 (1 day apart)</option>
-              </select>
-            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={load} disabled={busy}>
+                Refresh Sources
+              </Button>
+              {submitPreview?.created.length ? (
+                <Button variant="secondary" onClick={() => void pushNow(submitPreview.created.map((entry) => entry.id))} disabled={busy}>
+                  Push Latest Now
+                </Button>
+              ) : null}
+              {submitPreview?.created.length ? (
+                <Button variant="destructive" onClick={() => void unschedule(submitPreview.created.map((entry) => entry.id))} disabled={busy}>
+                  Unschedule Latest
+                </Button>
+              ) : null}
+              <Button onClick={() => void submit()} disabled={busy}>
+                Queue Post Tool Run
+              </Button>
+            </div>
+          </div>
 
-            <label className={styles.field}>
-              <span className={styles.label}>Tone / Generation Profile</span>
-              <input
-                className={styles.input}
-                value={toneOverride}
-                onChange={(event) => setToneOverride(event.target.value)}
-                placeholder="professional-local-expert"
-                disabled={busy}
-              />
-            </label>
+          <ClientTabs clientId={clientId} />
 
-            <label className={styles.field}>
-              <span className={styles.label}>System Message (Optional)</span>
-              <textarea
-                className={styles.textarea}
+          {scheduledDispatcherExpected ? (
+            <Alert>
+              <AlertTitle>Worker dispatch</AlertTitle>
+              <AlertDescription>
+                Posts are dispatched automatically from the worker scheduler. Use push now to force immediate dispatch eligibility.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          {status ? (
+            <Alert>
+              <AlertTitle>Run queued</AlertTitle>
+              <AlertDescription>{status}</AlertDescription>
+            </Alert>
+          ) : null}
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>Workspace issue</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardHeader>
+      </Card>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Card className="border-border/70 bg-card/90 shadow-sm">
+          <CardHeader>
+            <CardDescription>Sitemap URLs</CardDescription>
+            <CardTitle>{sitemapUrls.length}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Discovered URLs available for single or batched post scheduling.</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/70 bg-card/90 shadow-sm">
+          <CardHeader>
+            <CardDescription>Queued URLs</CardDescription>
+            <CardTitle>{queuedLandingUrls.length}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Landing pages already protected from duplicate near-term queueing.</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/70 bg-card/90 shadow-sm">
+          <CardHeader>
+            <CardDescription>Due Now</CardDescription>
+            <CardTitle>{dueScheduledCount}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Scheduled artifacts waiting on the worker to publish eligibility.</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border/70 bg-card/90 shadow-sm">
+          <CardHeader>
+            <CardDescription>Allowed Assets</CardDescription>
+            <CardTitle>{allowedAssets.length}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Media assets that can be attached to the post queue.</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.85fr)]">
+        <Card className="border-border/70 bg-card/90 shadow-sm">
+          <CardHeader className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle>Run Config</CardTitle>
+                <CardDescription>Set generation mode, voice, and landing pages.</CardDescription>
+              </div>
+              <Badge variant="outline">{mode === "single" ? "Single Post" : "Spawn 3"}</Badge>
+            </div>
+            <Separator />
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Mode</label>
+                <select
+                  className="w-full rounded-xl border border-border/80 bg-background px-3 py-2.5 text-sm shadow-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15"
+                  value={mode}
+                  onChange={(event) => setMode(event.target.value === "spawn3" ? "spawn3" : "single")}
+                  disabled={busy}
+                >
+                  <option value="single">Single Post</option>
+                  <option value="spawn3">Spawn 3 (1 day apart)</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Tone / Generation Profile</label>
+                <Input
+                  value={toneOverride}
+                  onChange={(event) => setToneOverride(event.target.value)}
+                  placeholder="professional-local-expert"
+                  disabled={busy}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">System Message (Optional)</label>
+              <Textarea
                 value={systemMessage}
                 onChange={(event) => setSystemMessage(event.target.value)}
                 placeholder="Provide any specific writing rules or campaign instruction for this run."
                 disabled={busy}
+                className="min-h-[130px]"
               />
-            </label>
-
-            {mode === "single" ? (
-              <label className={styles.field}>
-                <span className={styles.label}>Landing URL</span>
-                <select className={styles.select} value={singleUrl} onChange={(event) => setSingleUrl(event.target.value)} disabled={busy}>
-                  {sitemapUrls.map((url) => (
-                    <option key={url} value={url}>
-                      {url}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <label className={styles.field}>
-                <span className={styles.label}>Landing URLs (Pick 3)</span>
-                <select
-                  className={styles.select}
-                  multiple
-                  size={12}
-                  value={spawn3Selection}
-                  onChange={(event) => {
-                    const values = Array.from(event.target.selectedOptions).map((option) => option.value);
-                    setSpawn3Selection(values.slice(0, 3));
-                  }}
-                  disabled={busy}
-                >
-                  {sitemapUrls.map((url) => (
-                    <option key={url} value={url}>
-                      {url}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            <div className={styles.inlineActions}>
-              <button type="button" className={styles.buttonSecondary} onClick={load} disabled={busy}>
-                Refresh Sources
-              </button>
-              <button type="button" className={styles.buttonPrimary} onClick={() => void submit()} disabled={busy}>
-                Queue Post Tool Run
-              </button>
-              {submitPreview?.created.length ? (
-                <button
-                  type="button"
-                  className={styles.buttonGhost}
-                  onClick={() => void pushNow(submitPreview.created.map((entry) => entry.id))}
-                  disabled={busy}
-                >
-                  Push Latest Now
-                </button>
-              ) : null}
-              {submitPreview?.created.length ? (
-                <button
-                  type="button"
-                  className={styles.buttonDanger}
-                  onClick={() => void unschedule(submitPreview.created.map((entry) => entry.id))}
-                  disabled={busy}
-                >
-                  Unschedule Latest
-                </button>
-              ) : null}
             </div>
-          </div>
-        </article>
 
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Validation + Queue Safety</h3>
-          </header>
-          <div className={styles.stack}>
-            <p className={styles.cardHint}>Sitemap: {sitemapUrl ?? "Not set"}</p>
-            <p className={styles.cardHint}>Default URL: {defaultPostUrl ?? "Not set"}</p>
-            <p className={styles.cardHint}>Selected URLs: {effectiveSelection.length}</p>
-            <p className={styles.cardHint}>Duplicate protected URLs currently queued/recent: {queuedLandingUrls.length}</p>
-            {effectiveSelection.map((url) => (
-              <span key={url} className={`${styles.badge} ${queuedSet.has(url.toLowerCase()) ? styles.statusError : styles.statusIdle}`}>
-                {url}
-              </span>
-            ))}
-            {warnings.length ? (
-              <pre className={styles.codeBlock}>{warnings.join("\n")}</pre>
-            ) : (
-              <p className={styles.empty}>No discovery warnings.</p>
-            )}
-          </div>
-        </article>
-
-        <article className={`${styles.card} ${styles.col12}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Latest Queue Result</h3>
-          </header>
-          {submitPreview ? (
-            <div className={styles.stack}>
-              <div className={styles.kpiRow}>
-                <span className={styles.badge}>Mode {submitPreview.mode}</span>
-                <span className={styles.badge}>Queued {submitPreview.scheduledCount}</span>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  {mode === "single" ? "Landing URL" : "Landing URLs (pick 3)"}
+                </label>
+                <span className="text-xs text-muted-foreground">
+                  {mode === "single" ? "Choose one URL" : `${effectiveSelection.length}/3 selected`}
+                </span>
               </div>
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
+
+              <Input
+                value={urlFilter}
+                onChange={(event) => setUrlFilter(event.target.value)}
+                placeholder="Filter sitemap URLs"
+                disabled={busy}
+              />
+
+              <ScrollArea className="h-[320px] rounded-2xl border border-border/80 bg-muted/20 p-2">
+                <div className="grid gap-2">
+                  {filteredSitemapUrls.length ? (
+                    filteredSitemapUrls.map((url) => {
+                      const selected =
+                        mode === "single"
+                          ? singleUrl === url
+                          : spawn3Selection.includes(url);
+                      const queued = queuedSet.has(url.toLowerCase());
+
+                      return (
+                        <button
+                          key={url}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            if (mode === "single") {
+                              setSingleUrl(url);
+                              return;
+                            }
+
+                            setSpawn3Selection((current) => {
+                              if (current.includes(url)) {
+                                return current.filter((entry) => entry !== url);
+                              }
+                              if (current.length >= 3) {
+                                return current;
+                              }
+                              return [...current, url];
+                            });
+                          }}
+                          className={cn(
+                            "flex items-start justify-between gap-3 rounded-2xl border px-3 py-3 text-left transition",
+                            selected
+                              ? "border-amber-500 bg-amber-50 text-foreground shadow-sm"
+                              : "border-border/80 bg-background hover:border-amber-300 hover:bg-amber-50/60",
+                            queued ? "ring-1 ring-red-400/50" : ""
+                          )}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{formatUrlLabel(url)}</span>
+                            <span className="mt-1 block text-xs text-muted-foreground">{url}</span>
+                          </span>
+                          <span className="flex flex-col items-end gap-1 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                            {queued ? <span className="text-red-600">Queued</span> : <span>Ready</span>}
+                            {selected ? <span className="text-foreground">Selected</span> : null}
+                          </span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-border/80 bg-background p-6 text-sm text-muted-foreground">
+                      No sitemap URLs match the current filter.
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+
+              <div className="rounded-2xl border border-border/80 bg-muted/30 p-3">
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Selected URLs</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {effectiveSelection.length ? (
+                    effectiveSelection.map((url) => (
+                      <Badge key={url} variant={queuedSet.has(url.toLowerCase()) ? "destructive" : "secondary"}>
+                        {formatUrlLabel(url)}
+                      </Badge>
+                    ))
+                  ) : (
+                    <span className="text-sm text-muted-foreground">No URL selected yet.</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={load} disabled={busy}>
+                  Refresh Sources
+                </Button>
+                <Button onClick={() => void submit()} disabled={busy}>
+                  Queue Post Tool Run
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-4 xl:sticky xl:top-6">
+          <Card className="border-border/70 bg-card/90 shadow-sm">
+            <CardHeader>
+              <CardTitle>Validation + Queue Safety</CardTitle>
+              <CardDescription>Review what will be protected before you queue the run.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 text-sm">
+                <div className="rounded-2xl border border-border/80 bg-muted/25 p-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Sitemap</p>
+                  <p className="mt-2 break-all text-foreground">{sitemapUrl ?? "Not set"}</p>
+                </div>
+                <div className="rounded-2xl border border-border/80 bg-muted/25 p-3">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Default URL</p>
+                  <p className="mt-2 break-all text-foreground">{defaultPostUrl ?? "Not set"}</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-border/80 bg-muted/25 p-3">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Selected</p>
+                    <p className="mt-2 text-lg font-semibold">{effectiveSelection.length}</p>
+                  </div>
+                  <div className="rounded-2xl border border-border/80 bg-muted/25 p-3">
+                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Duplicate protection</p>
+                    <p className="mt-2 text-lg font-semibold">{queuedLandingUrls.length}</p>
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Discovery warnings</p>
+                {warnings.length ? (
+                  <div className="mt-3 space-y-2">
+                    {warnings.map((warning) => (
+                      <div key={warning} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                        {warning}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">No discovery warnings.</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {submitPreview ? (
+            <Card className="border-border/70 bg-card/90 shadow-sm">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <CardTitle>Latest Queue Result</CardTitle>
+                    <CardDescription>Preview of what the worker accepted on the last submit.</CardDescription>
+                  </div>
+                  <Badge variant="outline">{submitPreview.mode}</Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">{submitPreview.scheduledCount} queued</Badge>
+                </div>
+                <div className="rounded-2xl border border-border/80">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[720px] border-collapse text-sm">
+                      <thead className="bg-muted/50 text-left text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2">Artifact</th>
+                          <th className="px-3 py-2">Landing URL</th>
+                          <th className="px-3 py-2">Scheduled</th>
+                          <th className="px-3 py-2">Asset</th>
+                          <th className="px-3 py-2">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {submitPreview.created.map((item) => (
+                          <tr key={item.id} className="border-t border-border/80">
+                            <td className="px-3 py-3 align-top font-mono text-xs">{item.id}</td>
+                            <td className="px-3 py-3 align-top break-all">{formatUrlLabel(item.landingUrl)}</td>
+                            <td className="px-3 py-3 align-top">{formatDate(item.scheduledFor)}</td>
+                            <td className="px-3 py-3 align-top">{item.mediaAssetId ?? "text-only"}</td>
+                            <td className="px-3 py-3 align-top">
+                              <div className="flex flex-wrap gap-2">
+                                <Button variant="outline" size="sm" onClick={() => void pushNow([item.id])} disabled={busy}>
+                                  Push Now
+                                </Button>
+                                <Button variant="destructive" size="sm" onClick={() => void unschedule([item.id])} disabled={busy}>
+                                  Unschedule
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {submitPreview.warnings.length ? (
+                  <Alert>
+                    <AlertTitle>Queue warnings</AlertTitle>
+                    <AlertDescription className="whitespace-pre-wrap">{submitPreview.warnings.join("\n")}</AlertDescription>
+                  </Alert>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
+      </div>
+
+      <Card className="border-border/70 bg-card/90 shadow-sm">
+        <CardHeader>
+          <CardTitle>Persisted Post Tool Queue</CardTitle>
+          <CardDescription>Saved artifacts in the queue, ready for the worker or manual push.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {persistedArtifacts.length ? (
+            <div className="rounded-2xl border border-border/80">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[860px] border-collapse text-sm">
+                  <thead className="bg-muted/50 text-left text-xs uppercase tracking-[0.16em] text-muted-foreground">
                     <tr>
-                      <th>Artifact</th>
-                      <th>Landing URL</th>
-                      <th>Scheduled</th>
-                      <th>Asset</th>
-                      <th>Status</th>
+                      <th className="px-3 py-2">Artifact</th>
+                      <th className="px-3 py-2">Landing URL</th>
+                      <th className="px-3 py-2">Created</th>
+                      <th className="px-3 py-2">Scheduled</th>
+                      <th className="px-3 py-2">Asset</th>
+                      <th className="px-3 py-2">Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {submitPreview.created.map((item) => (
-                      <tr key={item.id}>
-                        <td>{item.id}</td>
-                        <td>{item.landingUrl}</td>
-                        <td>{formatDate(item.scheduledFor)}</td>
-                        <td>{item.mediaAssetId ?? "text-only"}</td>
-                        <td>
-                          <div className={styles.inlineActions}>
-                            <span>{item.status}</span>
-                            <button
-                              type="button"
-                              className={styles.buttonGhost}
-                              onClick={() => void pushNow([item.id])}
-                              disabled={busy}
-                            >
-                              Push Now
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.buttonDanger}
-                              onClick={() => void unschedule([item.id])}
-                              disabled={busy}
-                            >
-                              Unschedule
-                            </button>
+                    {persistedArtifacts.map((item) => (
+                      <tr key={item.id} className="border-t border-border/80">
+                        <td className="px-3 py-3 align-top font-mono text-xs">{item.id}</td>
+                        <td className="px-3 py-3 align-top break-all">{item.landingUrl ?? "n/a"}</td>
+                        <td className="px-3 py-3 align-top">{formatDate(item.createdAt)}</td>
+                        <td className="px-3 py-3 align-top">{item.scheduledFor ? formatDate(item.scheduledFor) : "n/a"}</td>
+                        <td className="px-3 py-3 align-top">{item.mediaAssetId ?? "text-only"}</td>
+                        <td className="px-3 py-3 align-top">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">{item.status}</Badge>
+                            {item.status === "draft" || item.status === "scheduled" ? (
+                              <>
+                                <Button variant="outline" size="sm" onClick={() => void pushNow([item.id])} disabled={busy}>
+                                  Push Now
+                                </Button>
+                                <Button variant="destructive" size="sm" onClick={() => void unschedule([item.id])} disabled={busy}>
+                                  Unschedule
+                                </Button>
+                              </>
+                            ) : null}
                           </div>
                         </td>
                       </tr>
@@ -459,73 +704,12 @@ export default function ClientPostToolPage() {
                   </tbody>
                 </table>
               </div>
-              {submitPreview.warnings.length ? <pre className={styles.codeBlock}>{submitPreview.warnings.join("\n")}</pre> : null}
             </div>
           ) : (
-            <p className={styles.empty}>No newly queued result in this session.</p>
+            <p className="text-sm text-muted-foreground">No persisted post-tool artifacts yet.</p>
           )}
-        </article>
-
-        <article className={`${styles.card} ${styles.col12}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Persisted Post Tool Queue</h3>
-          </header>
-          {persistedArtifacts.length ? (
-            <div className={styles.tableWrap}>
-              <table className={styles.table}>
-                <thead>
-                  <tr>
-                    <th>Artifact</th>
-                    <th>Landing URL</th>
-                    <th>Created</th>
-                    <th>Scheduled</th>
-                    <th>Asset</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {persistedArtifacts.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.id}</td>
-                      <td>{item.landingUrl ?? "n/a"}</td>
-                      <td>{formatDate(item.createdAt)}</td>
-                      <td>{item.scheduledFor ? formatDate(item.scheduledFor) : "n/a"}</td>
-                      <td>{item.mediaAssetId ?? "text-only"}</td>
-                      <td>
-                        <div className={styles.inlineActions}>
-                          <span>{item.status}</span>
-                          {item.status === "draft" || item.status === "scheduled" ? (
-                            <>
-                              <button
-                                type="button"
-                                className={styles.buttonGhost}
-                                onClick={() => void pushNow([item.id])}
-                                disabled={busy}
-                              >
-                                Push Now
-                              </button>
-                              <button
-                                type="button"
-                                className={styles.buttonDanger}
-                                onClick={() => void unschedule([item.id])}
-                                disabled={busy}
-                              >
-                                Unschedule
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className={styles.empty}>No persisted post-tool artifacts yet.</p>
-          )}
-        </article>
-      </section>
-    </>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
