@@ -4,7 +4,13 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
-import styles from "../../../_components/dashboard.module.css";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 interface ContentArtifact {
   id: string;
@@ -181,99 +187,137 @@ export default function ClientContentOpsPage() {
   };
 
   return (
-    <>
-      <section className={styles.hero}>
-        <h2 className={styles.heroTitle}>Content Operations</h2>
-        <p className={styles.heroSubtitle}>
-          Review GEO post drafts, edit copy/snippets, and queue approved items into scheduled dispatch.
-        </p>
-        <ClientTabs clientId={clientId} />
-        <div className={styles.topbarRow}>
-          <label className={styles.field} style={{ maxWidth: 220 }}>
-            <span className={styles.label}>Status Filter</span>
-            <select
-              className={styles.select}
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-            >
-              <option value="draft">draft</option>
-              <option value="scheduled">scheduled</option>
-              <option value="published">published</option>
-              <option value="failed">failed</option>
-              <option value="all">all</option>
-            </select>
-          </label>
-          <button type="button" className={styles.buttonSecondary} onClick={load} disabled={busy}>
-            Refresh
-          </button>
-          <span className={styles.badge}>Items {artifacts.length}</span>
-        </div>
-        {message ? <span className={`${styles.badge} ${styles.statusActive}`}>{message}</span> : null}
-        {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
-      </section>
-
-      <section className={styles.grid}>
-        <article className={`${styles.card} ${styles.col4}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Draft Queue</h3>
-          </header>
-          <div className={styles.stack}>
-            {artifacts.map((artifact) => (
-              <button
-                key={artifact.id}
-                type="button"
-                className={`${styles.buttonGhost} ${selected?.id === artifact.id ? styles.buttonSecondary : ""}`}
-                onClick={() => setSelectedId(artifact.id)}
-              >
-                {(artifact.title ?? "Untitled Artifact").slice(0, 72)}
-              </button>
-            ))}
-            {!artifacts.length ? <p className={styles.empty}>No content artifacts found for this filter.</p> : null}
-          </div>
-        </article>
-
-        <article className={`${styles.card} ${styles.col8}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>{selected?.title ?? "Content Detail"}</h3>
-            {selected ? <span className={styles.badge}>{selected.status}</span> : null}
-          </header>
-          {selected ? (
-            <div className={styles.stack}>
-              <p className={styles.cardHint}>Created {formatDate(selected.createdAt)}</p>
-              <p className={styles.cardHint}>Scheduled {formatDate(selected.scheduledFor)}</p>
-              <label className={styles.field}>
-                <span className={styles.label}>Title</span>
-                <input className={styles.input} value={title} onChange={(event) => setTitle(event.target.value)} />
-              </label>
-              <label className={styles.field}>
-                <span className={styles.label}>Snippet (GBP Summary)</span>
-                <textarea className={styles.textarea} value={snippet} onChange={(event) => setSnippet(event.target.value)} />
-              </label>
-              <label className={styles.field}>
-                <span className={styles.label}>Long Form Draft</span>
-                <textarea className={styles.textarea} value={body} onChange={(event) => setBody(event.target.value)} />
-              </label>
-              <div className={styles.inlineActions}>
-                <button type="button" className={styles.buttonSecondary} onClick={() => void saveEdits()} disabled={busy}>
-                  Save Edits
-                </button>
-                <button type="button" className={styles.buttonPrimary} onClick={() => void approveAndQueue(false)} disabled={busy}>
-                  Approve + Queue Now
-                </button>
-                <button type="button" className={styles.buttonPrimary} onClick={() => void approveAndQueue(true)} disabled={busy}>
-                  Approve + Queue Recommended
-                </button>
-                <button type="button" className={styles.buttonGhost} onClick={() => void rejectDraft()} disabled={busy}>
-                  Reject
-                </button>
+    <div className="space-y-6 pb-8">
+      <Card className="overflow-hidden border-stone-200/80 bg-white/95 shadow-sm">
+        <CardHeader className="space-y-5 p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <Badge variant="outline" className="w-fit rounded-full border-stone-200 bg-stone-50 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-stone-600">
+                Content Ops
+              </Badge>
+              <div className="space-y-2">
+                <CardTitle className="text-3xl font-medium tracking-tight">Content Operations</CardTitle>
+                <CardDescription className="max-w-4xl text-base leading-7">
+                  Review GEO post drafts, edit copy and snippets, and queue approved items into scheduled dispatch.
+                </CardDescription>
               </div>
-              <pre className={styles.codeBlock}>{JSON.stringify(selected.metadata, null, 2)}</pre>
             </div>
-          ) : (
-            <p className={styles.empty}>Select a content artifact to review it.</p>
-          )}
-        </article>
-      </section>
-    </>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={load} disabled={busy}>
+                Refresh
+              </Button>
+            </div>
+          </div>
+
+          <ClientTabs clientId={clientId} />
+
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">Items {artifacts.length}</Badge>
+            <Badge variant="secondary">Selected {selected?.status ?? "none"}</Badge>
+          </div>
+
+          {message ? (
+            <Alert className="border-emerald-200 bg-emerald-50/80 text-emerald-950">
+              <AlertTitle>Content update</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null}
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>Content issue</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardHeader>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.35fr)_minmax(0,0.65fr)]">
+        <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+          <CardHeader>
+            <CardTitle>Draft Queue</CardTitle>
+            <CardDescription>Pick a content artifact to edit.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <label className="space-y-2">
+              <span className="text-sm font-medium text-stone-700">Status Filter</span>
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="draft">draft</SelectItem>
+                    <SelectItem value="scheduled">scheduled</SelectItem>
+                    <SelectItem value="published">published</SelectItem>
+                    <SelectItem value="failed">failed</SelectItem>
+                    <SelectItem value="all">all</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {artifacts.map((artifact) => (
+                <Button
+                  key={artifact.id}
+                  type="button"
+                  variant={selected?.id === artifact.id ? "secondary" : "outline"}
+                  className="w-full justify-start"
+                  onClick={() => setSelectedId(artifact.id)}
+                >
+                  {(artifact.title ?? "Untitled Artifact").slice(0, 72)}
+                </Button>
+              ))}
+            </div>
+            {!artifacts.length ? <p className="text-sm text-muted-foreground">No content artifacts found for this filter.</p> : null}
+          </CardContent>
+        </Card>
+
+        <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+          <CardHeader>
+            <CardTitle>{selected?.title ?? "Content Detail"}</CardTitle>
+            <CardDescription>{selected ? `Created ${formatDate(selected.createdAt)} | Scheduled ${formatDate(selected.scheduledFor)}` : "Select a content artifact to review it."}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {selected ? (
+              <>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Title</span>
+                  <Input value={title} onChange={(event) => setTitle(event.target.value)} />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Snippet (GBP Summary)</span>
+                  <Textarea className="min-h-28" value={snippet} onChange={(event) => setSnippet(event.target.value)} />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Long Form Draft</span>
+                  <Textarea className="min-h-56" value={body} onChange={(event) => setBody(event.target.value)} />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" onClick={() => void saveEdits()} disabled={busy}>
+                    Save Edits
+                  </Button>
+                  <Button onClick={() => void approveAndQueue(false)} disabled={busy}>
+                    Approve + Queue Now
+                  </Button>
+                  <Button onClick={() => void approveAndQueue(true)} disabled={busy}>
+                    Approve + Queue Recommended
+                  </Button>
+                  <Button variant="outline" onClick={() => void rejectDraft()} disabled={busy}>
+                    Reject
+                  </Button>
+                </div>
+                <div className="overflow-hidden rounded-2xl border border-stone-200/80">
+                  <pre className="max-h-80 overflow-auto bg-stone-950 p-4 text-xs leading-5 text-stone-100">
+                    {JSON.stringify(selected.metadata, null, 2)}
+                  </pre>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Select a content artifact to review it.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }

@@ -4,7 +4,11 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
-import styles from "../../../_components/dashboard.module.css";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 type RunStatus = "created" | "running" | "completed" | "failed" | "partially_completed" | "rolled_back";
 
@@ -179,149 +183,177 @@ export default function ClientBlitzPage() {
   };
 
   return (
-    <>
-      <section className={styles.hero}>
-        <h2 className={styles.heroTitle}>Blitz Worker</h2>
-        <p className={styles.heroSubtitle}>
-          Run the full Blitz protocol for this client, inspect action-level execution, and rollback reversible actions.
-        </p>
-        <ClientTabs clientId={clientId} />
-        {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
-      </section>
-
-      <section className={styles.grid}>
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Start New Blitz Run</h3>
-            <span className={`${styles.badge} ${styles.statusActive}`}>Autonomous Mode</span>
-          </header>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Triggered By</span>
-              <input className={styles.input} value={triggeredBy} onChange={(event) => setTriggeredBy(event.target.value)} />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Rollback Reason Template</span>
-              <input
-                className={styles.input}
-                value={rollbackReason}
-                onChange={(event) => setRollbackReason(event.target.value)}
-              />
-            </label>
-          </div>
-
-          <div className={styles.kpiRow}>
-            {Object.entries(protocol).map(([key, value]) => (
-              <label key={key} className={styles.badge}>
-                <input
-                  type="checkbox"
-                  checked={value}
-                  onChange={(event) =>
-                    setProtocol((current) => ({
-                      ...current,
-                      [key]: event.target.checked
-                    }))
-                  }
-                />{" "}
-                {key}
-              </label>
-            ))}
-          </div>
-
-          <div className={styles.inlineActions}>
-            <button type="button" className={styles.buttonPrimary} disabled={busy} onClick={() => void startBlitzRun()}>
-              {busy ? "Launching..." : "Launch Blitz Run"}
-            </button>
-            <button type="button" className={styles.buttonGhost} disabled={loading} onClick={loadRuns}>
-              Refresh Runs
-            </button>
-          </div>
-        </article>
-
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Run Selector</h3>
-            <span className={styles.badge}>{runs.length} runs</span>
-          </header>
-          <label className={styles.field}>
-            <span className={styles.label}>Selected Run</span>
-            <select className={styles.select} value={selectedRunId} onChange={(event) => setSelectedRunId(event.target.value)}>
-              {!runs.length ? <option value="">No runs available</option> : null}
-              {runs.map((run) => (
-                <option key={run.id} value={run.id}>
-                  {run.status} | {run.id.slice(0, 8)} | {formatDate(run.createdAt)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedRun ? (
-            <div className={styles.kpiRow}>
-              <span className={styles.badge}>Status: {selectedRun.status}</span>
-              <span className={styles.badge}>Started: {formatDate(selectedRun.startedAt)}</span>
-              <span className={styles.badge}>Completed: {formatDate(selectedRun.completedAt)}</span>
+    <div className="space-y-6 pb-8">
+      <Card className="overflow-hidden border-stone-200/80 bg-white/95 shadow-sm">
+        <CardHeader className="space-y-5 p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <Badge variant="outline" className="w-fit rounded-full border-stone-200 bg-stone-50 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-stone-600">
+                Blitz Worker
+              </Badge>
+              <div className="space-y-2">
+                <CardTitle className="text-3xl font-medium tracking-tight">Blitz Worker</CardTitle>
+                <CardDescription className="max-w-4xl text-base leading-7">
+                  Run the full Blitz protocol for this client, inspect action-level execution, and rollback reversible actions.
+                </CardDescription>
+              </div>
             </div>
-          ) : (
-            <p className={styles.empty}>{loading ? "Loading runs..." : "No run selected."}</p>
-          )}
-        </article>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void startBlitzRun()} disabled={busy}>
+                {busy ? "Launching..." : "Launch Blitz Run"}
+              </Button>
+              <Button variant="outline" disabled={loading} onClick={loadRuns}>
+                Refresh Runs
+              </Button>
+            </div>
+          </div>
 
-        <article className={`${styles.card} ${styles.col12}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Action Timeline</h3>
-            <p className={styles.cardHint}>Rollback is available directly from each action row</p>
-          </header>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
+          <ClientTabs clientId={clientId} />
+
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">{runs.length} runs</Badge>
+            {selectedRun ? (
+              <>
+                <Badge variant="secondary">Status: {selectedRun.status}</Badge>
+                <Badge variant="secondary">Started: {formatDate(selectedRun.startedAt)}</Badge>
+                <Badge variant="secondary">Completed: {formatDate(selectedRun.completedAt)}</Badge>
+              </>
+            ) : null}
+          </div>
+
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>Blitz issue</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardHeader>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.55fr)_minmax(0,0.45fr)]">
+        <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+          <CardHeader>
+            <CardTitle>Start New Blitz Run</CardTitle>
+            <CardDescription>Choose protocol controls and operator metadata before launch.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Triggered By</span>
+                <Input value={triggeredBy} onChange={(event) => setTriggeredBy(event.target.value)} />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Rollback Reason Template</span>
+                <Input value={rollbackReason} onChange={(event) => setRollbackReason(event.target.value)} />
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(protocol).map(([key, value]) => (
+                <label key={key} className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-stone-50 px-4 py-2 text-sm text-stone-700">
+                  <input
+                    type="checkbox"
+                    checked={value}
+                    onChange={(event) =>
+                      setProtocol((current) => ({
+                        ...current,
+                        [key]: event.target.checked
+                      }))
+                    }
+                  />
+                  {key}
+                </label>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+          <CardHeader>
+            <CardTitle>Run Selector</CardTitle>
+            <CardDescription>Pick a run to inspect its action sequence.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <label className="space-y-2">
+              <span className="text-sm font-medium text-stone-700">Selected Run</span>
+              <select className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm shadow-sm" value={selectedRunId} onChange={(event) => setSelectedRunId(event.target.value)}>
+                {!runs.length ? <option value="">No runs available</option> : null}
+                {runs.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {run.status} | {run.id.slice(0, 8)} | {formatDate(run.createdAt)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedRun ? (
+              <div className="space-y-2 text-sm text-stone-700">
+                <p>Created: {formatDate(selectedRun.createdAt)}</p>
+                <p>Created By: {selectedRun.createdBy}</p>
+                <div className="overflow-hidden rounded-2xl border border-stone-200/80">
+                  <pre className="max-h-56 overflow-auto bg-stone-950 p-4 text-xs leading-5 text-stone-100">
+                    {JSON.stringify(selectedRun.policySnapshot, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">{loading ? "Loading runs..." : "No run selected."}</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+        <CardHeader>
+          <CardTitle>Action Timeline</CardTitle>
+          <CardDescription>Rollback is available directly from each action row.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto rounded-2xl border border-stone-200/80">
+            <table className="min-w-full text-sm">
+              <thead className="bg-stone-50 text-left text-xs uppercase tracking-[0.14em] text-stone-500">
                 <tr>
-                  <th>Phase</th>
-                  <th>Action Type</th>
-                  <th>Status</th>
-                  <th>Risk</th>
-                  <th>Policy</th>
-                  <th>Executed</th>
-                  <th>Error</th>
-                  <th>Rollback</th>
+                  <th className="px-4 py-3">Phase</th>
+                  <th className="px-4 py-3">Action Type</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Risk</th>
+                  <th className="px-4 py-3">Policy</th>
+                  <th className="px-4 py-3">Executed</th>
+                  <th className="px-4 py-3">Error</th>
+                  <th className="px-4 py-3">Rollback</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-stone-200/80">
                 {actions.map((action) => (
                   <tr key={action.id}>
-                    <td>{action.phase}</td>
-                    <td>{action.actionType}</td>
-                    <td>{action.status}</td>
-                    <td>{action.riskTier}</td>
-                    <td>{action.policyDecision}</td>
-                    <td>{formatDate(action.executedAt)}</td>
-                    <td>{action.error ?? "-"}</td>
-                    <td>
+                    <td className="px-4 py-4">{action.phase}</td>
+                    <td className="px-4 py-4">{action.actionType}</td>
+                    <td className="px-4 py-4">{action.status}</td>
+                    <td className="px-4 py-4">{action.riskTier}</td>
+                    <td className="px-4 py-4">{action.policyDecision}</td>
+                    <td className="px-4 py-4">{formatDate(action.executedAt)}</td>
+                    <td className="px-4 py-4">{action.error ?? "-"}</td>
+                    <td className="px-4 py-4">
                       {action.status === "executed" || action.status === "failed" ? (
-                        <button
-                          type="button"
-                          className={styles.buttonDanger}
-                          disabled={busy}
-                          onClick={() => void rollbackAction(action.id)}
-                        >
+                        <Button variant="destructive" size="sm" disabled={busy} onClick={() => void rollbackAction(action.id)}>
                           Rollback
-                        </button>
+                        </Button>
                       ) : (
-                        <span className={styles.muted}>n/a</span>
+                        <span className="text-muted-foreground">n/a</span>
                       )}
                     </td>
                   </tr>
                 ))}
                 {!actions.length ? (
                   <tr>
-                    <td colSpan={8}>
-                      <p className={styles.empty}>No actions loaded for the selected run.</p>
+                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                      No actions loaded for the selected run.
                     </td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
           </div>
-        </article>
-      </section>
-    </>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

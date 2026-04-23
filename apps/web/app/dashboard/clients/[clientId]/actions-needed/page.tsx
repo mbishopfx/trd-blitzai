@@ -4,7 +4,11 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
-import styles from "../../../_components/dashboard.module.css";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type ActionNeededStatus = "pending" | "approved" | "executed" | "failed" | "dismissed" | "manual_completed";
 
@@ -174,162 +178,196 @@ export default function ClientActionsNeededPage() {
   };
 
   return (
-    <>
-      <section className={styles.hero}>
-        <h2 className={styles.heroTitle}>Actions Needed</h2>
-        <p className={styles.heroSubtitle}>
-          Risky GBP changes are queued here for operator review before execution.
-        </p>
-        <ClientTabs clientId={clientId} />
-        <div className={styles.topbarRow}>
-          <span className={styles.badge}>Pending {pendingCount}</span>
-          <label className={styles.field} style={{ maxWidth: 220 }}>
-            <span className={styles.label}>Status Filter</span>
-            <select
-              className={styles.select}
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as ActionNeededStatus | "all")}
-            >
-              {statusOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className={styles.buttonSecondary} onClick={load} disabled={loading || Boolean(busyId)}>
-            Refresh
-          </button>
-        </div>
-        {message ? <span className={`${styles.badge} ${styles.statusActive}`}>{message}</span> : null}
-        {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
-      </section>
-
-      <section className={styles.grid}>
-        <article className={`${styles.card} ${styles.col7}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Queued Tasks ({actionsNeeded.length})</h3>
-          </header>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Location</th>
-                  <th>Risk</th>
-                  <th>Status</th>
-                  <th>Operations</th>
-                  <th>Created</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {actionsNeeded.map((item) => {
-                  const payload = item.payload ?? {};
-                  const operations = operationSummary(payload);
-                  const busy = busyId === item.id;
-                  return (
-                    <tr key={item.id} onClick={() => setSelectedId(item.id)} style={{ cursor: "pointer" }}>
-                      <td>
-                        <strong>{item.title}</strong>
-                        <p className={styles.empty}>{item.description ?? "No description"}</p>
-                      </td>
-                      <td>{item.locationName ?? item.locationId ?? "N/A"}</td>
-                      <td>{item.riskTier}</td>
-                      <td>{item.status}</td>
-                      <td>{operations || "N/A"}</td>
-                      <td>{formatDate(item.createdAt)}</td>
-                      <td>
-                        <div className={styles.kpiRow}>
-                          <button
-                            className={styles.buttonPrimary}
-                            disabled={busy || item.status !== "pending"}
-                            onClick={() => approve(item)}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            className={styles.buttonSecondary}
-                            disabled={busy || item.status !== "pending"}
-                            onClick={() => updateStatus(item, "manual_completed")}
-                          >
-                            Manual Done
-                          </button>
-                          <button
-                            className={styles.buttonGhost}
-                            disabled={busy || item.status !== "pending"}
-                            onClick={() => updateStatus(item, "dismissed")}
-                          >
-                            Dismiss
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {!loading && actionsNeeded.length === 0 ? (
-                  <tr>
-                    <td colSpan={7}>
-                      <p className={styles.empty}>No actions needed for this client and filter.</p>
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </article>
-
-        <article className={`${styles.card} ${styles.col5}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Operator Review</h3>
-          </header>
-          {selectedItem ? (
-            <div className={styles.stack}>
-              <div className={styles.kpiRow}>
-                <span className={styles.badge}>{selectedItem.provider}</span>
-                <span className={styles.badge}>{selectedItem.actionType}</span>
-                <span className={styles.badge}>{selectedItem.riskTier}</span>
-                <span className={styles.badge}>{selectedItem.status}</span>
-              </div>
-              <p className={styles.empty}><strong>{selectedItem.title}</strong></p>
-              <p className={styles.cardHint}>{selectedItem.description ?? "No description"}</p>
-              <p className={styles.empty}>Location: {selectedItem.locationName ?? selectedItem.locationId ?? "N/A"}</p>
-              <p className={styles.empty}>Created: {formatDate(selectedItem.createdAt)}</p>
-              <p className={styles.empty}>Approved: {formatDate(selectedItem.approvedAt)}</p>
-              <p className={styles.empty}>Executed: {formatDate(selectedItem.executedAt)}</p>
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Operation</th>
-                      <th>Payload</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {operationDetails(selectedItem.payload).map((operation, index) => (
-                      <tr key={`${selectedItem.id}-operation-${index}`}>
-                        <td>{typeof operation.kind === "string" ? operation.kind : "unknown"}</td>
-                        <td>
-                          <pre className={styles.codeBlock}>{JSON.stringify(operation, null, 2)}</pre>
-                        </td>
-                      </tr>
-                    ))}
-                    {operationDetails(selectedItem.payload).length === 0 ? (
-                      <tr>
-                        <td colSpan={2}>
-                          <pre className={styles.codeBlock}>{JSON.stringify(selectedItem.payload, null, 2)}</pre>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+    <div className="space-y-6 pb-8">
+      <Card className="overflow-hidden border-stone-200/80 bg-white/95 shadow-sm">
+        <CardHeader className="space-y-5 p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <Badge variant="outline" className="w-fit rounded-full border-stone-200 bg-stone-50 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-stone-600">
+                Actions Needed
+              </Badge>
+              <div className="space-y-2">
+                <CardTitle className="text-3xl font-medium tracking-tight">Actions Needed</CardTitle>
+                <CardDescription className="max-w-4xl text-base leading-7">
+                  Risky GBP changes are queued here for operator review before execution.
+                </CardDescription>
               </div>
             </div>
-          ) : (
-            <p className={styles.empty}>Select a queued action to inspect its exact execution plan.</p>
-          )}
-        </article>
-      </section>
-    </>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={load} disabled={loading || Boolean(busyId)}>
+                Refresh
+              </Button>
+            </div>
+          </div>
+
+          <ClientTabs clientId={clientId} />
+
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">Pending {pendingCount}</Badge>
+          </div>
+
+          {message ? (
+            <Alert className="border-emerald-200 bg-emerald-50/80 text-emerald-950">
+              <AlertTitle>Action update</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null}
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>Action issue</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <div className="grid gap-4 md:grid-cols-[minmax(0,280px)_auto] md:items-end">
+            <label className="space-y-2">
+              <span className="text-sm font-medium text-stone-700">Status Filter</span>
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as ActionNeededStatus | "all")}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {statusOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+        </CardHeader>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+        <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+          <CardHeader>
+            <CardTitle>Queued Tasks ({actionsNeeded.length})</CardTitle>
+            <CardDescription>Review the execution plan, risk tier, and operator controls for each item.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto rounded-2xl border border-stone-200/80">
+              <table className="min-w-full text-sm">
+                <thead className="bg-stone-50 text-left text-xs uppercase tracking-[0.14em] text-stone-500">
+                  <tr>
+                    <th className="px-4 py-3">Title</th>
+                    <th className="px-4 py-3">Location</th>
+                    <th className="px-4 py-3">Risk</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Operations</th>
+                    <th className="px-4 py-3">Created</th>
+                    <th className="px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-200/80">
+                  {actionsNeeded.map((item) => {
+                    const payload = item.payload ?? {};
+                    const operations = operationSummary(payload);
+                    const busy = busyId === item.id;
+                    return (
+                      <tr key={item.id} className="cursor-pointer align-top" onClick={() => setSelectedId(item.id)}>
+                        <td className="px-4 py-4">
+                          <p className="font-medium text-stone-900">{item.title}</p>
+                          <p className="text-xs text-muted-foreground">{item.description ?? "No description"}</p>
+                        </td>
+                        <td className="px-4 py-4">{item.locationName ?? item.locationId ?? "N/A"}</td>
+                        <td className="px-4 py-4">{item.riskTier}</td>
+                        <td className="px-4 py-4">{item.status}</td>
+                        <td className="px-4 py-4">{operations || "N/A"}</td>
+                        <td className="px-4 py-4">{formatDate(item.createdAt)}</td>
+                        <td className="px-4 py-4">
+                          <div className="flex flex-wrap gap-2">
+                            <Button size="sm" onClick={() => approve(item)} disabled={busy || item.status !== "pending"}>
+                              Approve
+                            </Button>
+                            <Button variant="secondary" size="sm" onClick={() => updateStatus(item, "manual_completed")} disabled={busy || item.status !== "pending"}>
+                              Manual Done
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => updateStatus(item, "dismissed")} disabled={busy || item.status !== "pending"}>
+                              Dismiss
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!loading && actionsNeeded.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                        No actions needed for this client and filter.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+          <CardHeader>
+            <CardTitle>Operator Review</CardTitle>
+            <CardDescription>Inspect the selected item and its execution payload.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {selectedItem ? (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">{selectedItem.provider}</Badge>
+                  <Badge variant="secondary">{selectedItem.actionType}</Badge>
+                  <Badge variant="secondary">{selectedItem.riskTier}</Badge>
+                  <Badge variant="secondary">{selectedItem.status}</Badge>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-lg font-medium text-stone-900">{selectedItem.title}</p>
+                  <p className="text-sm leading-6 text-muted-foreground">{selectedItem.description ?? "No description"}</p>
+                </div>
+                <div className="grid gap-3 text-sm text-stone-700">
+                  <p>Location: {selectedItem.locationName ?? selectedItem.locationId ?? "N/A"}</p>
+                  <p>Created: {formatDate(selectedItem.createdAt)}</p>
+                  <p>Approved: {formatDate(selectedItem.approvedAt)}</p>
+                  <p>Executed: {formatDate(selectedItem.executedAt)}</p>
+                </div>
+                <div className="overflow-x-auto rounded-2xl border border-stone-200/80">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-stone-50 text-left text-xs uppercase tracking-[0.14em] text-stone-500">
+                      <tr>
+                        <th className="px-4 py-3">Operation</th>
+                        <th className="px-4 py-3">Payload</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200/80">
+                      {operationDetails(selectedItem.payload).map((operation, index) => (
+                        <tr key={`${selectedItem.id}-operation-${index}`}>
+                          <td className="px-4 py-4">{typeof operation.kind === "string" ? operation.kind : "unknown"}</td>
+                          <td className="px-4 py-4">
+                            <pre className="max-h-80 overflow-auto rounded-xl bg-stone-950/95 p-4 text-xs leading-5 text-stone-100">
+                              {JSON.stringify(operation, null, 2)}
+                            </pre>
+                          </td>
+                        </tr>
+                      ))}
+                      {operationDetails(selectedItem.payload).length === 0 ? (
+                        <tr>
+                          <td colSpan={2} className="px-4 py-4">
+                            <pre className="max-h-80 overflow-auto rounded-xl bg-stone-950/95 p-4 text-xs leading-5 text-stone-100">
+                              {JSON.stringify(selectedItem.payload, null, 2)}
+                            </pre>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Select a queued action to inspect its exact execution plan.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }

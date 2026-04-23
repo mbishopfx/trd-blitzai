@@ -4,7 +4,11 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
-import styles from "../../../_components/dashboard.module.css";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 
 interface ContentArtifact {
   id: string;
@@ -201,98 +205,133 @@ export default function ClientQnaPage() {
   };
 
   return (
-    <>
-      <section className={styles.hero}>
-        <h2 className={styles.heroTitle}>Q&A Operations</h2>
-        <p className={styles.heroSubtitle}>
-          Review generated GBP Q&A seed packs, copy high-intent answers, and mark packs as seeded once the team applies them.
-        </p>
-        <ClientTabs clientId={clientId} />
-        <div className={styles.inlineActions}>
-          <button type="button" className={styles.buttonGhost} onClick={load} disabled={busy}>
-            Refresh Seed Packs
-          </button>
-          <button type="button" className={styles.buttonSecondary} onClick={() => void saveEdits()} disabled={busy || !selected}>
-            Save Edits
-          </button>
-          <button type="button" className={styles.buttonSecondary} onClick={() => void approvePack()} disabled={busy || !selected}>
-            Approve Pack
-          </button>
-          <button type="button" className={styles.buttonPrimary} onClick={() => void markSeeded()} disabled={busy || !selected}>
-            Mark Seeded
-          </button>
-          <button type="button" className={styles.buttonGhost} onClick={() => void rejectPack()} disabled={busy || !selected}>
-            Reject
-          </button>
-        </div>
-        {status ? <span className={`${styles.badge} ${styles.statusActive}`}>{status}</span> : null}
-        {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
-      </section>
+    <div className="space-y-6 pb-8">
+      <Card className="overflow-hidden border-stone-200/80 bg-white/95 shadow-sm">
+        <CardHeader className="space-y-5 p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <Badge variant="outline" className="w-fit rounded-full border-stone-200 bg-stone-50 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-stone-600">
+                Q&A Ops
+              </Badge>
+              <div className="space-y-2">
+                <CardTitle className="text-3xl font-medium tracking-tight">Q&A Operations</CardTitle>
+                <CardDescription className="max-w-4xl text-base leading-7">
+                  Review generated GBP Q&A seed packs, copy high-intent answers, and mark packs as seeded once the team applies them.
+                </CardDescription>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={load} disabled={busy}>
+                Refresh Seed Packs
+              </Button>
+              <Button variant="secondary" onClick={() => void saveEdits()} disabled={busy || !selected}>
+                Save Edits
+              </Button>
+              <Button variant="secondary" onClick={() => void approvePack()} disabled={busy || !selected}>
+                Approve Pack
+              </Button>
+              <Button onClick={() => void markSeeded()} disabled={busy || !selected}>
+                Mark Seeded
+              </Button>
+              <Button variant="outline" onClick={() => void rejectPack()} disabled={busy || !selected}>
+                Reject
+              </Button>
+            </div>
+          </div>
 
-      <section className={styles.grid}>
-        <article className={`${styles.card} ${styles.col4}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Seed Packs</h3>
-          </header>
-          <div className={styles.stack}>
+          <ClientTabs clientId={clientId} />
+
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">Seed packs: {artifacts.length}</Badge>
+            <Badge variant="secondary">Selected: {selected?.status ?? "none"}</Badge>
+          </div>
+
+          {status ? (
+            <Alert className="border-emerald-200 bg-emerald-50/80 text-emerald-950">
+              <AlertTitle>Q&A update</AlertTitle>
+              <AlertDescription>{status}</AlertDescription>
+            </Alert>
+          ) : null}
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>Q&A issue</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardHeader>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.35fr)_minmax(0,0.65fr)]">
+        <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+          <CardHeader>
+            <CardTitle>Seed Packs</CardTitle>
+            <CardDescription>Select a pack to inspect or edit.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
             {artifacts.map((artifact) => (
-              <button
+              <Button
                 key={artifact.id}
                 type="button"
-                className={`${styles.buttonGhost} ${selected?.id === artifact.id ? styles.buttonSecondary : ""}`}
+                variant={selected?.id === artifact.id ? "secondary" : "outline"}
+                className="w-full justify-start"
                 onClick={() => setSelectedId(artifact.id)}
               >
                 {(artifact.title ?? "Untitled Q&A Pack").slice(0, 72)}
-              </button>
+              </Button>
             ))}
-            {!artifacts.length ? <p className={styles.empty}>No generated Q&A seed packs yet.</p> : null}
-          </div>
-        </article>
+            {!artifacts.length ? <p className="text-sm text-muted-foreground">No generated Q&A seed packs yet.</p> : null}
+          </CardContent>
+        </Card>
 
-        <article className={`${styles.card} ${styles.col8}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>{selected?.title ?? "Q&A Seed Detail"}</h3>
-            {selected ? <span className={styles.badge}>{selected.status}</span> : null}
-          </header>
-          {selected ? (
-            <div className={styles.stack}>
-              <p className={styles.cardHint}>Created {formatDate(selected.createdAt)}</p>
-              <pre className={styles.codeBlock}>{selected.body}</pre>
-              <label className={styles.field}>
-                <span className={styles.label}>Q&A Editor JSON</span>
-                <textarea className={styles.textarea} value={qaEditor} onChange={(event) => setQaEditor(event.target.value)} />
-              </label>
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Question</th>
-                      <th>Answer</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {qaPairs.map((pair, index) => (
-                      <tr key={`${pair.question}-${index}`}>
-                        <td>{pair.question}</td>
-                        <td>{pair.answer}</td>
-                      </tr>
-                    ))}
-                    {!qaPairs.length ? (
+        <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+          <CardHeader>
+            <CardTitle>{selected?.title ?? "Q&A Seed Detail"}</CardTitle>
+            <CardDescription>{selected ? `Created ${formatDate(selected.createdAt)}` : "Select a pack to inspect it."}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {selected ? (
+              <>
+                <div className="overflow-hidden rounded-2xl border border-stone-200/80">
+                  <pre className="max-h-72 overflow-auto bg-stone-950 p-4 text-xs leading-5 text-stone-100">
+                    {selected.body}
+                  </pre>
+                </div>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Q&A Editor JSON</span>
+                  <Textarea className="min-h-48 font-mono text-sm" value={qaEditor} onChange={(event) => setQaEditor(event.target.value)} />
+                </label>
+                <div className="overflow-x-auto rounded-2xl border border-stone-200/80">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-stone-50 text-left text-xs uppercase tracking-[0.14em] text-stone-500">
                       <tr>
-                        <td colSpan={2}>
-                          <p className={styles.empty}>No Q&A pairs found in this artifact.</p>
-                        </td>
+                        <th className="px-4 py-3">Question</th>
+                        <th className="px-4 py-3">Answer</th>
                       </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <p className={styles.empty}>Select a Q&A pack to review it.</p>
-          )}
-        </article>
-      </section>
-    </>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200/80">
+                      {qaPairs.map((pair, index) => (
+                        <tr key={`${pair.question}-${index}`}>
+                          <td className="px-4 py-4">{pair.question}</td>
+                          <td className="px-4 py-4">{pair.answer}</td>
+                        </tr>
+                      ))}
+                      {!qaPairs.length ? (
+                        <tr>
+                          <td colSpan={2} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                            No Q&A pairs found in this artifact.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Select a Q&A pack to review it.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   );
 }
