@@ -4,7 +4,19 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
-import styles from "../../../_components/dashboard.module.css";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { getSupabaseBrowserClient, isSupabaseBrowserConfigured } from "@/lib/supabase-browser";
 
 interface OrchestrationSettings {
@@ -109,7 +121,7 @@ const HARDCODED_POSTS_PER_WEEK = HARDCODED_POSTS_PER_DAY * HARDCODED_POST_DAYS_P
 export default function ClientOrchestrationSettingsPage() {
   const { clientId } = useParams<{ clientId: string }>();
   const searchParams = useSearchParams();
-  const { request, buildAuthHeaders } = useDashboardContext();
+  const { request } = useDashboardContext();
 
   const [tone, setTone] = useState("professional-local-expert");
   const [objectivesText, setObjectivesText] = useState("");
@@ -163,6 +175,10 @@ export default function ClientOrchestrationSettingsPage() {
   const supabaseBrowserConfigured = isSupabaseBrowserConfigured();
 
   const selectedAssetSet = useMemo(() => new Set(selectedPhotoAssetIds), [selectedPhotoAssetIds]);
+  const mediaAssetCount = mediaAssets.length;
+  const allowedAssetCount = useMemo(() => mediaAssets.filter((asset) => asset.isAllowedForPosts).length, [mediaAssets]);
+  const activeIntegrationCount = useMemo(() => integrations.filter((integration) => integration.isActive).length, [integrations]);
+  const selectedMediaCount = selectedPhotoAssetIds.length;
 
   const loadWorkspace = () => {
     setBusy(true);
@@ -573,477 +589,533 @@ export default function ClientOrchestrationSettingsPage() {
   };
 
   return (
-    <>
-      <section className={styles.hero}>
-        <h2 className={styles.heroTitle}>Client Orchestration Settings</h2>
-        <p className={styles.heroSubtitle}>
-          Configure voice/objectives, post cadence, EEAT snippet mode, approved post photos from the client bucket, and external analytics/ad integrations.
-        </p>
-        <ClientTabs clientId={clientId} />
-        <div className={styles.kpiRow}>
-          <span className={styles.badge}>Post frequency: {HARDCODED_POSTS_PER_WEEK}/week (locked)</span>
-          <span className={styles.badge}>Word range: {postWordCountMin}-{postWordCountMax}</span>
-          <span className={styles.badge}>EEAT snippets: {eeatStructuredSnippetEnabled ? "Enabled" : "Disabled"}</span>
-          <span className={styles.badge}>Auto reply min rating: {reviewAutoReplyMinRating}</span>
-          <span className={styles.badge}>Review request cap/day: {reviewRequestDailyCap}</span>
-          <span className={styles.badge}>GEO approval gate: {geoRequireOperatorApproval ? "On" : "Off"}</span>
-          <span className={styles.badge}>Media flood target: {mediaFloodTargetAssets}</span>
-          <span className={styles.badge}>Allowed assets: {mediaAssets.filter((asset) => asset.isAllowedForPosts).length}</span>
+    <div className="space-y-6 pb-8">
+      <Card className="overflow-hidden border-stone-200/80 bg-white/95 shadow-sm">
+        <CardHeader className="space-y-5 p-6">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <Badge variant="outline" className="w-fit rounded-full border-stone-200 bg-stone-50 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-stone-600">
+                Orchestration
+              </Badge>
+              <div className="space-y-2">
+                <CardTitle className="text-3xl font-medium tracking-tight text-balance">Client Orchestration Settings</CardTitle>
+                <CardDescription className="max-w-4xl text-base leading-7">
+                  Configure tone, cadence, review behavior, media gating, and external integrations from one structured workspace.
+                </CardDescription>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void saveSettings()} disabled={busy}>
+                {busy ? "Saving..." : "Save Settings"}
+              </Button>
+              <Button variant="outline" onClick={loadWorkspace} disabled={busy}>
+                Reload
+              </Button>
+              <Button variant="secondary" onClick={() => void syncAttribution()} disabled={busy || syncingAttribution}>
+                {syncingAttribution ? "Syncing Attribution..." : "Sync Attribution Now"}
+              </Button>
+            </div>
+          </div>
+
+          <ClientTabs clientId={clientId} />
+
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="secondary">Post frequency: {HARDCODED_POSTS_PER_WEEK}/week</Badge>
+            <Badge variant="secondary">Word range: {postWordCountMin}-{postWordCountMax}</Badge>
+            <Badge variant="secondary">EEAT snippets: {eeatStructuredSnippetEnabled ? "Enabled" : "Disabled"}</Badge>
+            <Badge variant="secondary">Auto reply min rating: {reviewAutoReplyMinRating}</Badge>
+            <Badge variant="secondary">Review cap/day: {reviewRequestDailyCap}</Badge>
+            <Badge variant="secondary">GEO approval: {geoRequireOperatorApproval ? "On" : "Off"}</Badge>
+            <Badge variant="secondary">Media target: {mediaFloodTargetAssets}</Badge>
+            <Badge variant="secondary">Allowed assets: {allowedAssetCount}</Badge>
+          </div>
+
+          {status ? (
+            <Alert className="border-emerald-200 bg-emerald-50/80 text-emerald-950">
+              <AlertTitle>Workspace update</AlertTitle>
+              <AlertDescription>{status}</AlertDescription>
+            </Alert>
+          ) : null}
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>Workspace issue</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </CardHeader>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.65fr)]">
+        <div className="space-y-6">
+          <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+            <CardHeader>
+              <CardTitle>Content + Review Voice</CardTitle>
+              <CardDescription>Set the tone and review voice the client will feel across content and replies.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Tone</span>
+                  <Input value={tone} onChange={(event) => setTone(event.target.value)} placeholder="professional-local-expert" />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Review Reply Style</span>
+                  <Input value={reviewReplyStyle} onChange={(event) => setReviewReplyStyle(event.target.value)} placeholder="balanced" />
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Auto Reply Min Rating (1-5)</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={reviewAutoReplyMinRating}
+                    onChange={(event) => setReviewAutoReplyMinRating(Number(event.target.value))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Review Request URL</span>
+                  <Input value={reviewRequestUrl} onChange={(event) => setReviewRequestUrl(event.target.value)} placeholder="https://g.page/r/.../review" />
+                </label>
+              </div>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Objectives (one per line)</span>
+                <Textarea
+                  className="min-h-36"
+                  value={objectivesText}
+                  onChange={(event) => setObjectivesText(event.target.value)}
+                  placeholder={"Increase local visibility\nIncrease direction clicks\nImprove review response velocity"}
+                />
+              </label>
+            </CardContent>
+          </Card>
+
+          <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+            <CardHeader>
+              <CardTitle>Cadence + URL Routing</CardTitle>
+              <CardDescription>Keep post volume, review routing, and default URLs in one predictable control surface.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Posts Per Week</span>
+                  <Input type="number" min={HARDCODED_POSTS_PER_WEEK} max={HARDCODED_POSTS_PER_WEEK} value={HARDCODED_POSTS_PER_WEEK} disabled />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">EEAT Snippet Mode</span>
+                  <Select value={eeatStructuredSnippetEnabled ? "enabled" : "disabled"} onValueChange={(value) => setEeatStructuredSnippetEnabled(value === "enabled")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">enabled</SelectItem>
+                        <SelectItem value="disabled">disabled</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Review Request Daily Cap</span>
+                  <Input type="number" min={1} max={400} value={reviewRequestDailyCap} onChange={(event) => setReviewRequestDailyCap(Number(event.target.value))} />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Review Request Cooldown (minutes)</span>
+                  <Input
+                    type="number"
+                    min={5}
+                    max={720}
+                    value={reviewRequestCooldownMinutes}
+                    onChange={(event) => setReviewRequestCooldownMinutes(Number(event.target.value))}
+                  />
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Review Request Delay (minutes)</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={720}
+                    value={reviewRequestDelayMinutes}
+                    onChange={(event) => setReviewRequestDelayMinutes(Number(event.target.value))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Review Request Jitter Max (minutes)</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={240}
+                    value={reviewRequestJitterMaxMinutes}
+                    onChange={(event) => setReviewRequestJitterMaxMinutes(Number(event.target.value))}
+                  />
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Post Word Count Min</span>
+                  <Input type="number" min={120} max={2000} value={postWordCountMin} onChange={(event) => setPostWordCountMin(Number(event.target.value))} />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Post Word Count Max</span>
+                  <Input type="number" min={120} max={2000} value={postWordCountMax} onChange={(event) => setPostWordCountMax(Number(event.target.value))} />
+                </label>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+            <CardHeader>
+              <CardTitle>GEO + Q&A Controls</CardTitle>
+              <CardDescription>Control approval gating, drip cadence, and truth-constrained Q&A seeding behavior.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Require Operator Approval</span>
+                  <Select value={geoRequireOperatorApproval ? "enabled" : "disabled"} onValueChange={(value) => setGeoRequireOperatorApproval(value === "enabled")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">enabled</SelectItem>
+                        <SelectItem value="disabled">disabled</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Q&A Target</span>
+                  <Input type="number" min={20} max={30} value={geoQaTarget} onChange={(event) => setGeoQaTarget(Number(event.target.value))} />
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Drip Min Days</span>
+                  <Input type="number" min={1} max={14} value={geoDripMinDays} onChange={(event) => setGeoDripMinDays(Number(event.target.value))} />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Drip Max Days</span>
+                  <Input type="number" min={1} max={21} value={geoDripMaxDays} onChange={(event) => setGeoDripMaxDays(Number(event.target.value))} />
+                </label>
+              </div>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Follow-up Draft Count</span>
+                <Input type="number" min={1} max={30} value={geoFollowUpCount} onChange={(event) => setGeoFollowUpCount(Number(event.target.value))} />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Truth Fact Bank (one per line)</span>
+                <Textarea
+                  className="min-h-40"
+                  value={geoFactBankText}
+                  onChange={(event) => setGeoFactBankText(event.target.value)}
+                  placeholder={"Same-day dispatch cutoff is 12:00 PM local time.\nLabor warranty is 5 years on qualifying installs.\nRheem and Navien tankless models are supported."}
+                />
+              </label>
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Sitemap URL</span>
+                  <Input value={sitemapUrl} onChange={(event) => setSitemapUrl(event.target.value)} placeholder="https://client.com/sitemap.xml" />
+                </label>
+                <Button variant="outline" onClick={() => void autoDetectSitemap()} disabled={busy}>
+                  Auto-detect Sitemap
+                </Button>
+              </div>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Default GBP Post URL</span>
+                <Input value={defaultPostUrl} onChange={(event) => setDefaultPostUrl(event.target.value)} placeholder="https://client.com/local-offer" />
+              </label>
+            </CardContent>
+          </Card>
+
+          <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+            <CardHeader>
+              <CardTitle>Media Flood Controls</CardTitle>
+              <CardDescription>Control derivative volume, pacing, and computer-vision behavior for media phase runs.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Target Assets</span>
+                  <Input type="number" min={5} max={150} value={mediaFloodTargetAssets} onChange={(event) => setMediaFloodTargetAssets(Number(event.target.value))} />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Batch Size</span>
+                  <Input type="number" min={1} max={30} value={mediaFloodBatchSize} onChange={(event) => setMediaFloodBatchSize(Number(event.target.value))} />
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Cooldown (ms)</span>
+                  <Input type="number" min={50} max={5000} value={mediaFloodCooldownMs} onChange={(event) => setMediaFloodCooldownMs(Number(event.target.value))} />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Max Per Location</span>
+                  <Input type="number" min={1} max={100} value={mediaFloodMaxPerLocation} onChange={(event) => setMediaFloodMaxPerLocation(Number(event.target.value))} />
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Vision Metadata</span>
+                  <Select value={mediaFloodEnableVision ? "enabled" : "disabled"} onValueChange={(value) => setMediaFloodEnableVision(value === "enabled")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">enabled</SelectItem>
+                        <SelectItem value="disabled">disabled</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Geo Tags</span>
+                  <Select value={mediaFloodIncludeGeoTags ? "enabled" : "disabled"} onValueChange={(value) => setMediaFloodIncludeGeoTags(value === "enabled")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">enabled</SelectItem>
+                        <SelectItem value="disabled">disabled</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Generate Stories</span>
+                  <Select value={mediaFloodIncludeStories ? "enabled" : "disabled"} onValueChange={(value) => setMediaFloodIncludeStories(value === "enabled")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">enabled</SelectItem>
+                        <SelectItem value="disabled">disabled</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="space-y-2">
+                  <span className="text-sm font-medium text-stone-700">Use Video Assets</span>
+                  <Select value={mediaFloodIncludeVideos ? "enabled" : "disabled"} onValueChange={(value) => setMediaFloodIncludeVideos(value === "enabled")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">enabled</SelectItem>
+                        <SelectItem value="disabled">disabled</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Generate 360/Panorama Variants</span>
+                <Select value={mediaFloodIncludeVirtualTours ? "enabled" : "disabled"} onValueChange={(value) => setMediaFloodIncludeVirtualTours(value === "enabled")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="enabled">enabled</SelectItem>
+                      <SelectItem value="disabled">disabled</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </label>
+            </CardContent>
+          </Card>
         </div>
-        <div className={styles.inlineActions}>
-          <button type="button" className={styles.buttonPrimary} onClick={() => void saveSettings()} disabled={busy}>
-            {busy ? "Saving..." : "Save Settings"}
-          </button>
-          <button type="button" className={styles.buttonGhost} onClick={loadWorkspace} disabled={busy}>
-            Reload
-          </button>
-          <button type="button" className={styles.buttonSecondary} onClick={() => void syncAttribution()} disabled={busy || syncingAttribution}>
-            {syncingAttribution ? "Syncing Attribution..." : "Sync Attribution Now"}
-          </button>
+
+        <div className="space-y-6">
+          <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+            <CardHeader>
+              <CardTitle>Workspace Snapshot</CardTitle>
+              <CardDescription>Quick readout of the current orchestration settings.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-stone-200/80 bg-stone-50/70 p-4">
+                <p className="text-xs uppercase tracking-[0.14em] text-stone-500">Post cadence</p>
+                <p className="mt-2 text-2xl font-semibold text-stone-900">{HARDCODED_POSTS_PER_WEEK}/week</p>
+              </div>
+              <div className="rounded-2xl border border-stone-200/80 bg-stone-50/70 p-4">
+                <p className="text-xs uppercase tracking-[0.14em] text-stone-500">Word range</p>
+                <p className="mt-2 text-2xl font-semibold text-stone-900">
+                  {postWordCountMin}-{postWordCountMax}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-stone-200/80 bg-stone-50/70 p-4">
+                <p className="text-xs uppercase tracking-[0.14em] text-stone-500">Media pool</p>
+                <p className="mt-2 text-2xl font-semibold text-stone-900">{mediaAssetCount}</p>
+              </div>
+              <div className="rounded-2xl border border-stone-200/80 bg-stone-50/70 p-4">
+                <p className="text-xs uppercase tracking-[0.14em] text-stone-500">Selectable assets</p>
+                <p className="mt-2 text-2xl font-semibold text-stone-900">{selectedMediaCount}</p>
+              </div>
+              <div className="rounded-2xl border border-stone-200/80 bg-stone-50/70 p-4">
+                <p className="text-xs uppercase tracking-[0.14em] text-stone-500">Allowed assets</p>
+                <p className="mt-2 text-2xl font-semibold text-stone-900">{allowedAssetCount}</p>
+              </div>
+              <div className="rounded-2xl border border-stone-200/80 bg-stone-50/70 p-4">
+                <p className="text-xs uppercase tracking-[0.14em] text-stone-500">Active integrations</p>
+                <p className="mt-2 text-2xl font-semibold text-stone-900">{activeIntegrationCount}</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+            <CardHeader>
+              <CardTitle>Connect GA4</CardTitle>
+              <CardDescription>Store the property ID and attach OAuth metadata for analytics attribution.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">GA4 Property / Account ID</span>
+                <Input value={ga4AccountId} onChange={(event) => setGa4AccountId(event.target.value)} />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Scopes (comma-separated)</span>
+                <Input value={ga4Scopes} onChange={(event) => setGa4Scopes(event.target.value)} />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Metadata JSON</span>
+                <Textarea className="min-h-28 font-mono text-sm" value={ga4Metadata} onChange={(event) => setGa4Metadata(event.target.value)} />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => void startGoogleOauth("ga4")} disabled={busy}>
+                  Connect to Google
+                </Button>
+                <Button variant="outline" onClick={() => void connectIntegration("ga4")} disabled={busy}>
+                  Save Manual Metadata
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+            <CardHeader>
+              <CardTitle>Connect Google Ads</CardTitle>
+              <CardDescription>Attach the Ads customer ID and metadata used by the attribution pipeline.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Google Ads Customer ID</span>
+                <Input value={adsAccountId} onChange={(event) => setAdsAccountId(event.target.value)} />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Scopes (comma-separated)</span>
+                <Input value={adsScopes} onChange={(event) => setAdsScopes(event.target.value)} />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Metadata JSON</span>
+                <Textarea className="min-h-28 font-mono text-sm" value={adsMetadata} onChange={(event) => setAdsMetadata(event.target.value)} />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => void startGoogleOauth("google_ads")} disabled={busy}>
+                  Connect to Google
+                </Button>
+                <Button variant="outline" onClick={() => void connectIntegration("google_ads")} disabled={busy}>
+                  Save Manual Metadata
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+            <CardHeader>
+              <CardTitle>Connect Search Console</CardTitle>
+              <CardDescription>Map the verified property URL used for search attribution.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-stone-700">Property URL</span>
+                <Input
+                  value={searchConsolePropertyUrl}
+                  onChange={(event) => setSearchConsolePropertyUrl(event.target.value)}
+                  placeholder="sc-domain:example.com or https://www.example.com/"
+                />
+              </label>
+              <p className="text-sm leading-6 text-muted-foreground">
+                Use the verified property URL you want mapped into attribution for this client.
+              </p>
+              <Button variant="secondary" onClick={() => void startGoogleOauth("search_console")} disabled={busy}>
+                Connect to Google
+              </Button>
+            </CardContent>
+          </Card>
         </div>
-        {status ? <span className={`${styles.badge} ${styles.statusActive}`}>{status}</span> : null}
-        {error ? <span className={`${styles.badge} ${styles.statusError}`}>{error}</span> : null}
-      </section>
+      </div>
 
-      <section className={styles.grid}>
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Content + Review Voice</h3>
-          </header>
-          <label className={styles.field}>
-            <span className={styles.label}>Tone</span>
-            <input
-              className={styles.input}
-              value={tone}
-              onChange={(event) => setTone(event.target.value)}
-              placeholder="professional-local-expert"
-            />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Review Reply Style</span>
-            <input
-              className={styles.input}
-              value={reviewReplyStyle}
-              onChange={(event) => setReviewReplyStyle(event.target.value)}
-              placeholder="balanced"
-            />
-          </label>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Auto Reply Min Rating (1-5)</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={1}
-                max={5}
-                value={reviewAutoReplyMinRating}
-                onChange={(event) => setReviewAutoReplyMinRating(Number(event.target.value))}
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Review Request URL</span>
-              <input
-                className={styles.input}
-                value={reviewRequestUrl}
-                onChange={(event) => setReviewRequestUrl(event.target.value)}
-                placeholder="https://g.page/r/.../review"
-              />
-            </label>
-          </div>
-          <label className={styles.field}>
-            <span className={styles.label}>Objectives (one per line)</span>
-            <textarea
-              className={styles.textarea}
-              value={objectivesText}
-              onChange={(event) => setObjectivesText(event.target.value)}
-              placeholder={"Increase local visibility\nIncrease direction clicks\nImprove review response velocity"}
-            />
-          </label>
-        </article>
-
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Cadence + URL Routing</h3>
-          </header>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Posts Per Week</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={HARDCODED_POSTS_PER_WEEK}
-                max={HARDCODED_POSTS_PER_WEEK}
-                value={HARDCODED_POSTS_PER_WEEK}
-                disabled
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>EEAT Snippet Mode</span>
-              <select
-                className={styles.select}
-                value={eeatStructuredSnippetEnabled ? "enabled" : "disabled"}
-                onChange={(event) => setEeatStructuredSnippetEnabled(event.target.value === "enabled")}
-              >
-                <option value="enabled">enabled</option>
-                <option value="disabled">disabled</option>
-              </select>
-            </label>
-          </div>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Review Request Daily Cap</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={1}
-                max={400}
-                value={reviewRequestDailyCap}
-                onChange={(event) => setReviewRequestDailyCap(Number(event.target.value))}
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Review Request Cooldown (minutes)</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={5}
-                max={720}
-                value={reviewRequestCooldownMinutes}
-                onChange={(event) => setReviewRequestCooldownMinutes(Number(event.target.value))}
-              />
-            </label>
-          </div>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Review Request Delay (minutes)</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={0}
-                max={720}
-                value={reviewRequestDelayMinutes}
-                onChange={(event) => setReviewRequestDelayMinutes(Number(event.target.value))}
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Review Request Jitter Max (minutes)</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={0}
-                max={240}
-                value={reviewRequestJitterMaxMinutes}
-                onChange={(event) => setReviewRequestJitterMaxMinutes(Number(event.target.value))}
-              />
-            </label>
-          </div>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Post Word Count Min</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={120}
-                max={2000}
-                value={postWordCountMin}
-                onChange={(event) => setPostWordCountMin(Number(event.target.value))}
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Post Word Count Max</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={120}
-                max={2000}
-                value={postWordCountMax}
-                onChange={(event) => setPostWordCountMax(Number(event.target.value))}
-              />
-            </label>
-          </div>
-          <header className={styles.cardHeader} style={{ marginTop: 16 }}>
-            <h3 className={styles.cardTitle}>GEO + Q&A Controls</h3>
-            <p className={styles.cardHint}>Controls approval gating, drip cadence, and truth-constrained Q&A seeding behavior.</p>
-          </header>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Require Operator Approval</span>
-              <select
-                className={styles.select}
-                value={geoRequireOperatorApproval ? "enabled" : "disabled"}
-                onChange={(event) => setGeoRequireOperatorApproval(event.target.value === "enabled")}
-              >
-                <option value="enabled">enabled</option>
-                <option value="disabled">disabled</option>
-              </select>
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Q&A Target</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={20}
-                max={30}
-                value={geoQaTarget}
-                onChange={(event) => setGeoQaTarget(Number(event.target.value))}
-              />
-            </label>
-          </div>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Drip Min Days</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={1}
-                max={14}
-                value={geoDripMinDays}
-                onChange={(event) => setGeoDripMinDays(Number(event.target.value))}
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Drip Max Days</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={1}
-                max={21}
-                value={geoDripMaxDays}
-                onChange={(event) => setGeoDripMaxDays(Number(event.target.value))}
-              />
-            </label>
-          </div>
-          <label className={styles.field}>
-            <span className={styles.label}>Follow-up Draft Count</span>
-            <input
-              className={styles.input}
-              type="number"
-              min={1}
-              max={30}
-              value={geoFollowUpCount}
-              onChange={(event) => setGeoFollowUpCount(Number(event.target.value))}
-            />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Truth Fact Bank (one per line)</span>
-            <textarea
-              className={styles.textarea}
-              value={geoFactBankText}
-              onChange={(event) => setGeoFactBankText(event.target.value)}
-              placeholder={"Same-day dispatch cutoff is 12:00 PM local time.\nLabor warranty is 5 years on qualifying installs.\nRheem and Navien tankless models are supported."}
-            />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Sitemap URL</span>
-            <input
-              className={styles.input}
-              value={sitemapUrl}
-              onChange={(event) => setSitemapUrl(event.target.value)}
-              placeholder="https://client.com/sitemap.xml"
-            />
-          </label>
-          <div className={styles.inlineActions}>
-            <button type="button" className={styles.buttonSecondary} onClick={() => void autoDetectSitemap()} disabled={busy}>
-              Auto-detect Sitemap
-            </button>
-          </div>
-          <label className={styles.field}>
-            <span className={styles.label}>Default GBP Post URL</span>
-            <input
-              className={styles.input}
-              value={defaultPostUrl}
-              onChange={(event) => setDefaultPostUrl(event.target.value)}
-              placeholder="https://client.com/local-offer"
-            />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Optional External Media URLs (one per line)</span>
-            <textarea
-              className={styles.textarea}
-              value={photoUrlsText}
-              onChange={(event) => setPhotoUrlsText(event.target.value)}
-              placeholder={"https://cdn.client.com/image-1.jpg\nhttps://cdn.client.com/video-1.mp4"}
-            />
-          </label>
-          <header className={styles.cardHeader} style={{ marginTop: 16 }}>
-            <h3 className={styles.cardTitle}>Media Flood Controls</h3>
-            <p className={styles.cardHint}>Controls derivative volume, pacing, and computer-vision behavior for media phase runs.</p>
-          </header>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Target Assets</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={5}
-                max={150}
-                value={mediaFloodTargetAssets}
-                onChange={(event) => setMediaFloodTargetAssets(Number(event.target.value))}
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Batch Size</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={1}
-                max={30}
-                value={mediaFloodBatchSize}
-                onChange={(event) => setMediaFloodBatchSize(Number(event.target.value))}
-              />
-            </label>
-          </div>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Cooldown (ms)</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={50}
-                max={5000}
-                value={mediaFloodCooldownMs}
-                onChange={(event) => setMediaFloodCooldownMs(Number(event.target.value))}
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Max Per Location</span>
-              <input
-                className={styles.input}
-                type="number"
-                min={1}
-                max={100}
-                value={mediaFloodMaxPerLocation}
-                onChange={(event) => setMediaFloodMaxPerLocation(Number(event.target.value))}
-              />
-            </label>
-          </div>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Vision Metadata</span>
-              <select
-                className={styles.select}
-                value={mediaFloodEnableVision ? "enabled" : "disabled"}
-                onChange={(event) => setMediaFloodEnableVision(event.target.value === "enabled")}
-              >
-                <option value="enabled">enabled</option>
-                <option value="disabled">disabled</option>
-              </select>
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Geo Tags</span>
-              <select
-                className={styles.select}
-                value={mediaFloodIncludeGeoTags ? "enabled" : "disabled"}
-                onChange={(event) => setMediaFloodIncludeGeoTags(event.target.value === "enabled")}
-              >
-                <option value="enabled">enabled</option>
-                <option value="disabled">disabled</option>
-              </select>
-            </label>
-          </div>
-          <div className={styles.split}>
-            <label className={styles.field}>
-              <span className={styles.label}>Generate Stories</span>
-              <select
-                className={styles.select}
-                value={mediaFloodIncludeStories ? "enabled" : "disabled"}
-                onChange={(event) => setMediaFloodIncludeStories(event.target.value === "enabled")}
-              >
-                <option value="enabled">enabled</option>
-                <option value="disabled">disabled</option>
-              </select>
-            </label>
-            <label className={styles.field}>
-              <span className={styles.label}>Use Video Assets</span>
-              <select
-                className={styles.select}
-                value={mediaFloodIncludeVideos ? "enabled" : "disabled"}
-                onChange={(event) => setMediaFloodIncludeVideos(event.target.value === "enabled")}
-              >
-                <option value="enabled">enabled</option>
-                <option value="disabled">disabled</option>
-              </select>
-            </label>
-          </div>
-          <label className={styles.field}>
-            <span className={styles.label}>Generate 360/Panorama Variants</span>
-            <select
-              className={styles.select}
-              value={mediaFloodIncludeVirtualTours ? "enabled" : "disabled"}
-              onChange={(event) => setMediaFloodIncludeVirtualTours(event.target.value === "enabled")}
-            >
-              <option value="enabled">enabled</option>
-              <option value="disabled">disabled</option>
-            </select>
-          </label>
-        </article>
-
-        <article className={`${styles.card} ${styles.col12}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Client Media Bucket</h3>
-            <p className={styles.cardHint}>Upload photos/videos and choose what the GBP workers can use</p>
-          </header>
-          <div className={styles.inlineActions}>
-            <label className={styles.buttonSecondary}>
+      <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+        <CardHeader>
+          <CardTitle>Client Media Bucket</CardTitle>
+          <CardDescription>Upload photos and videos, then choose which assets the GBP workers can use.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <label className="inline-flex cursor-pointer items-center rounded-full border border-stone-300 bg-stone-50 px-4 py-2 text-sm font-medium text-stone-700 transition hover:bg-white">
               Upload Media
               <input
                 type="file"
                 accept="image/*,video/mp4,video/quicktime,video/webm"
                 multiple
-                style={{ display: "none" }}
+                className="hidden"
                 onChange={(event) => void uploadFiles(event.target.files)}
               />
             </label>
           </div>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
+          <div className="overflow-x-auto rounded-2xl border border-stone-200/80">
+            <table className="min-w-full text-sm">
+              <thead className="bg-stone-50 text-left text-xs uppercase tracking-[0.14em] text-stone-500">
                 <tr>
-                  <th>Preview</th>
-                  <th>File</th>
-                  <th>Allowed</th>
-                  <th>Selected Pool</th>
-                  <th>Uploaded</th>
-                  <th>Delete</th>
+                  <th className="px-4 py-3">Preview</th>
+                  <th className="px-4 py-3">File</th>
+                  <th className="px-4 py-3">Allowed</th>
+                  <th className="px-4 py-3">Selected Pool</th>
+                  <th className="px-4 py-3">Uploaded</th>
+                  <th className="px-4 py-3">Delete</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-stone-200/80">
                 {mediaAssets.map((asset) => (
-                  <tr key={asset.id}>
-                    <td>
+                  <tr key={asset.id} className="align-top">
+                    <td className="px-4 py-4">
                       {asset.previewUrl ? (
                         asset.mimeType?.startsWith("video/") ? (
-                          <video
-                            src={asset.previewUrl}
-                            muted
-                            playsInline
-                            controls={false}
-                            style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8 }}
-                          />
+                          <video src={asset.previewUrl} muted playsInline controls={false} className="size-16 rounded-2xl object-cover" />
                         ) : (
-                          <img
-                            src={asset.previewUrl}
-                            alt={asset.fileName}
-                            style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8 }}
-                          />
+                          <img src={asset.previewUrl} alt={asset.fileName} className="size-16 rounded-2xl object-cover" />
                         )
                       ) : (
-                        <span className={styles.muted}>No preview</span>
+                        <span className="text-sm text-muted-foreground">No preview</span>
                       )}
                     </td>
-                    <td>
-                      <strong>{asset.fileName}</strong>
-                      <br />
-                      <span className={styles.muted}>{asset.storageBucket}/{asset.storagePath}</span>
+                    <td className="px-4 py-4">
+                      <div className="space-y-1">
+                        <p className="font-medium text-stone-900">{asset.fileName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {asset.storageBucket}/{asset.storagePath}
+                        </p>
+                      </div>
                     </td>
-                    <td>
+                    <td className="px-4 py-4">
                       <input
                         type="checkbox"
                         checked={asset.isAllowedForPosts}
                         onChange={(event) => void toggleAssetAllowed(asset, event.target.checked)}
                       />
                     </td>
-                    <td>
+                    <td className="px-4 py-4">
                       <input
                         type="checkbox"
                         checked={selectedAssetSet.has(asset.id)}
@@ -1057,138 +1129,66 @@ export default function ClientOrchestrationSettingsPage() {
                         }}
                       />
                     </td>
-                    <td>{formatDate(asset.createdAt)}</td>
-                    <td>
-                      <button type="button" className={styles.buttonDanger} disabled={busy} onClick={() => void deleteAsset(asset)}>
+                    <td className="px-4 py-4 text-muted-foreground">{formatDate(asset.createdAt)}</td>
+                    <td className="px-4 py-4">
+                      <Button variant="destructive" size="sm" disabled={busy} onClick={() => void deleteAsset(asset)}>
                         Remove
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
                 {!mediaAssets.length ? (
                   <tr>
-                    <td colSpan={6}>
-                      <p className={styles.empty}>No media uploaded yet for this client bucket.</p>
+                    <td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                      No media uploaded yet for this client bucket.
                     </td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
           </div>
-        </article>
+        </CardContent>
+      </Card>
 
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Connect GA4</h3>
-          </header>
-          <label className={styles.field}>
-            <span className={styles.label}>GA4 Property / Account ID</span>
-            <input className={styles.input} value={ga4AccountId} onChange={(event) => setGa4AccountId(event.target.value)} />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Scopes (comma-separated)</span>
-            <input className={styles.input} value={ga4Scopes} onChange={(event) => setGa4Scopes(event.target.value)} />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Metadata JSON</span>
-            <textarea className={styles.textarea} value={ga4Metadata} onChange={(event) => setGa4Metadata(event.target.value)} />
-          </label>
-          <div className={styles.inlineActions}>
-            <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void startGoogleOauth("ga4")}>
-              OAuth Connect GA4
-            </button>
-            <button type="button" className={styles.buttonGhost} disabled={busy} onClick={() => void connectIntegration("ga4")}>
-              Save Manual Metadata
-            </button>
-          </div>
-        </article>
-
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Connect Google Ads</h3>
-          </header>
-          <label className={styles.field}>
-            <span className={styles.label}>Google Ads Customer ID</span>
-            <input className={styles.input} value={adsAccountId} onChange={(event) => setAdsAccountId(event.target.value)} />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Scopes (comma-separated)</span>
-            <input className={styles.input} value={adsScopes} onChange={(event) => setAdsScopes(event.target.value)} />
-          </label>
-          <label className={styles.field}>
-            <span className={styles.label}>Metadata JSON</span>
-            <textarea className={styles.textarea} value={adsMetadata} onChange={(event) => setAdsMetadata(event.target.value)} />
-          </label>
-          <div className={styles.inlineActions}>
-            <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void startGoogleOauth("google_ads")}>
-              OAuth Connect Google Ads
-            </button>
-            <button type="button" className={styles.buttonGhost} disabled={busy} onClick={() => void connectIntegration("google_ads")}>
-              Save Manual Metadata
-            </button>
-          </div>
-        </article>
-
-        <article className={`${styles.card} ${styles.col6}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Connect Search Console</h3>
-          </header>
-          <label className={styles.field}>
-            <span className={styles.label}>Property URL</span>
-            <input
-              className={styles.input}
-              value={searchConsolePropertyUrl}
-              onChange={(event) => setSearchConsolePropertyUrl(event.target.value)}
-              placeholder="sc-domain:example.com or https://www.example.com/"
-            />
-          </label>
-          <p className={styles.cardHint}>
-            Use the verified property URL you want mapped into attribution for this client.
-          </p>
-          <button type="button" className={styles.buttonSecondary} disabled={busy} onClick={() => void startGoogleOauth("search_console")}>
-            OAuth Connect Search Console
-          </button>
-        </article>
-
-        <article className={`${styles.card} ${styles.col12}`}>
-          <header className={styles.cardHeader}>
-            <h3 className={styles.cardTitle}>Connected Integrations</h3>
-          </header>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Account</th>
-                  <th>Scopes</th>
-                  <th>Connected</th>
-                  <th>Token Expires</th>
-                  <th>Status</th>
+      <Card className="border-stone-200/80 bg-white/95 shadow-sm">
+        <CardHeader>
+          <CardTitle>Connected Integrations</CardTitle>
+          <CardDescription>Live OAuth and manual connections stored for this client.</CardDescription>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-stone-50 text-left text-xs uppercase tracking-[0.14em] text-stone-500">
+              <tr>
+                <th className="px-4 py-3">Provider</th>
+                <th className="px-4 py-3">Account</th>
+                <th className="px-4 py-3">Scopes</th>
+                <th className="px-4 py-3">Connected</th>
+                <th className="px-4 py-3">Token Expires</th>
+                <th className="px-4 py-3">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-200/80">
+              {integrations.map((integration) => (
+                <tr key={integration.id}>
+                  <td className="px-4 py-4 capitalize">{integration.provider}</td>
+                  <td className="px-4 py-4">{integration.providerAccountId}</td>
+                  <td className="px-4 py-4">{integration.scopes.join(", ") || "-"}</td>
+                  <td className="px-4 py-4">{formatDate(integration.connectedAt)}</td>
+                  <td className="px-4 py-4">{integration.tokenExpiresAt ? formatDate(integration.tokenExpiresAt) : "-"}</td>
+                  <td className="px-4 py-4">{integration.isActive ? "active" : "inactive"}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {integrations.map((integration) => (
-                  <tr key={integration.id}>
-                    <td>{integration.provider}</td>
-                    <td>{integration.providerAccountId}</td>
-                    <td>{integration.scopes.join(", ") || "-"}</td>
-                    <td>{formatDate(integration.connectedAt)}</td>
-                    <td>{integration.tokenExpiresAt ? formatDate(integration.tokenExpiresAt) : "-"}</td>
-                    <td>{integration.isActive ? "active" : "inactive"}</td>
-                  </tr>
-                ))}
-                {!integrations.length ? (
-                  <tr>
-                    <td colSpan={6}>
-                      <p className={styles.empty}>No integrations connected for this client yet.</p>
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </article>
-      </section>
-    </>
+              ))}
+              {!integrations.length ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    No integrations connected for this client yet.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
