@@ -9,6 +9,7 @@ import {
   updateContentArtifact
 } from "@/lib/control-plane-store";
 import { fail, ok } from "@/lib/http";
+import { dispatchDueContentArtifactsFromWeb } from "@/lib/scheduled-dispatch";
 import { discoverSitemapForWebsite, listUrlsFromSitemap } from "@/lib/sitemap-discovery";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
@@ -319,11 +320,43 @@ export async function POST(request: NextRequest, { params }: Params) {
         });
       }
 
+      let dispatchSummary: Awaited<ReturnType<typeof dispatchDueContentArtifactsFromWeb>> | null = null;
+      let dispatchError: string | null = null;
+      if (updated.length > 0) {
+        try {
+          dispatchSummary = await dispatchDueContentArtifactsFromWeb(Math.max(updated.length, 8));
+        } catch (error) {
+          dispatchError = error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      const refreshedCandidates = await listClientContentArtifacts(params.clientId, {
+        channel: "gbp",
+        phase: "content",
+        status: "all",
+        limit: 500
+      });
+      const refreshedIndex = new Map(refreshedCandidates.map((artifact) => [artifact.id, artifact]));
+      const refreshedUpdated = updated.map((entry) => {
+        const current = refreshedIndex.get(entry.id);
+        return {
+          id: entry.id,
+          status: current?.status ?? entry.status,
+          scheduledFor: current?.scheduledFor ?? entry.scheduledFor
+        };
+      });
+      const updatedIdSet = new Set(updated.map((entry) => entry.id));
+      const publishedSelectedArtifactIds =
+        dispatchSummary?.publishedArtifactIds.filter((artifactId) => updatedIdSet.has(artifactId)) ?? [];
+
       return ok({
         action: "push_now",
         pushedCount: updated.length,
-        updated,
-        skipped
+        updated: refreshedUpdated,
+        skipped,
+        dispatchSummary,
+        dispatchError,
+        publishedSelectedArtifactIds
       });
     }
 

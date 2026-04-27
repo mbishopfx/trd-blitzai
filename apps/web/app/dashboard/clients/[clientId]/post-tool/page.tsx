@@ -75,6 +75,17 @@ interface PushNowResponse {
     id: string;
     reason: string;
   }>;
+  dispatchSummary: {
+    attemptedCount: number;
+    publishedCount: number;
+    failedCount: number;
+    skippedCount: number;
+    publishedArtifactIds: string[];
+    failedArtifacts: Array<{ artifactId: string; error: string; terminal: boolean }>;
+    skippedArtifacts: Array<{ artifactId: string; reason: string }>;
+  } | null;
+  dispatchError: string | null;
+  publishedSelectedArtifactIds: string[];
 }
 
 interface UnscheduleResponse {
@@ -154,10 +165,12 @@ export default function ClientPostToolPage() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
-  const load = () => {
+  const load = (options?: { preserveMessages?: boolean }) => {
     setBusy(true);
-    setError(null);
-    setStatus(null);
+    if (!options?.preserveMessages) {
+      setError(null);
+      setStatus(null);
+    }
 
     void request<SitemapPayload>(`/api/v1/clients/${clientId}/post-tool`)
       .then((payload) => {
@@ -232,7 +245,7 @@ export default function ClientPostToolPage() {
       });
       setSubmitPreview(payload);
       setStatus(`Queued ${payload.scheduledCount} post dispatch${payload.scheduledCount === 1 ? "" : "es"}.`);
-      void load();
+      void load({ preserveMessages: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -255,8 +268,24 @@ export default function ClientPostToolPage() {
           artifactIds
         }
       });
-      setStatus(`Pushed ${payload.pushedCount} artifact(s) for immediate dispatch.`);
-      void load();
+      if (payload.dispatchError) {
+        setError(`Fallback dispatch failed: ${payload.dispatchError}`);
+      }
+      if (payload.publishedSelectedArtifactIds.length > 0) {
+        const backlogFlushCount = Math.max(
+          0,
+          (payload.dispatchSummary?.publishedCount ?? payload.publishedSelectedArtifactIds.length) -
+            payload.publishedSelectedArtifactIds.length
+        );
+        setStatus(
+          backlogFlushCount > 0
+            ? `Published ${payload.publishedSelectedArtifactIds.length} selected artifact(s) immediately and flushed ${backlogFlushCount} other due post(s).`
+            : `Published ${payload.publishedSelectedArtifactIds.length} selected artifact(s) immediately.`
+        );
+      } else {
+        setStatus(`Pushed ${payload.pushedCount} artifact(s) for immediate dispatch.`);
+      }
+      void load({ preserveMessages: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -285,7 +314,7 @@ export default function ClientPostToolPage() {
         }
       });
       setStatus(`Unscheduled ${payload.unscheduledCount} artifact(s).`);
-      void load();
+      void load({ preserveMessages: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -308,12 +337,12 @@ export default function ClientPostToolPage() {
               </div>
               <CardTitle className="text-3xl">Isolated GBP Post Tool</CardTitle>
               <CardDescription className="max-w-3xl text-base">
-                Queue one-off GBP posts or a 3-post sequence with a cleaner preview flow. The worker still handles dispatch, QR media, and duplicate protection.
+                Queue one-off GBP posts or a 3-post sequence with a cleaner preview flow. Scheduled dispatch still runs through the worker, and Push Now also attempts an immediate server-side fallback publish.
               </CardDescription>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={load} disabled={busy}>
+              <Button variant="outline" onClick={() => load()} disabled={busy}>
                 Refresh Sources
               </Button>
               {submitPreview?.created.length ? (
@@ -335,10 +364,10 @@ export default function ClientPostToolPage() {
           <ClientTabs clientId={clientId} />
 
           {scheduledDispatcherExpected ? (
-            <Alert>
+              <Alert>
               <AlertTitle>Worker dispatch</AlertTitle>
               <AlertDescription>
-                Posts are dispatched automatically from the worker scheduler. Use push now to force immediate dispatch eligibility.
+                Posts are dispatched automatically from the worker scheduler. Push Now also triggers an immediate fallback dispatch attempt from the web app so missed worker ticks do not fail silently.
               </AlertDescription>
             </Alert>
           ) : null}
@@ -536,7 +565,7 @@ export default function ClientPostToolPage() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={load} disabled={busy}>
+                <Button variant="outline" onClick={() => load()} disabled={busy}>
                   Refresh Sources
                 </Button>
                 <Button onClick={() => void submit()} disabled={busy}>

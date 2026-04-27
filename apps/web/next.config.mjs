@@ -7,6 +7,7 @@ const nextConfig = {
     outputFileTracingRoot: path.resolve(process.cwd(), "../..")
   },
   transpilePackages: [
+    "@trd-aiblitz/worker-ts",
     "@trd-aiblitz/domain",
     "@trd-aiblitz/integrations-gbp",
     "@trd-aiblitz/integrations-attribution"
