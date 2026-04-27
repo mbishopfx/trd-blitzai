@@ -42,7 +42,7 @@ export function generateReviewReply(input: {
   if (rating >= 4) {
     return [
       `Thanks for sharing this feedback about ${input.businessName}.`,
-      comment ? `We appreciate the details: "${comment}".` : "We appreciate you taking the time to leave a review.",
+      comment ? `We appreciate the details: "${comment}".` : "Thank you for the positive rating, we appreciate you taking the time to support us!",
       `- ${signature}`
     ].join(" ");
   }
@@ -50,14 +50,14 @@ export function generateReviewReply(input: {
   if (rating === 3) {
     return [
       `Thank you for the honest feedback about ${input.businessName}.`,
-      "We are reviewing this internally and would value a chance to improve your next visit.",
+      comment ? `We are reviewing your comments: "${comment}" internally.` : "We appreciate the rating and would value a chance to improve your next visit.",
       `- ${signature}`
     ].join(" ");
   }
 
   return [
     `Thank you for flagging this. We are sorry your experience with ${input.businessName} missed expectations.`,
-    "Please contact us directly so we can make this right and investigate quickly.",
+    comment ? `We are investigating your feedback: "${comment}" quickly.` : "Please contact us directly so we can learn more about your experience and make this right.",
     `- ${signature}`
   ].join(" ");
 }

@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { generateReviewReply } from "@trd-aiblitz/integrations-gbp";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -95,7 +96,21 @@ export default function ClientReviewsPage() {
 
         const drafts: Record<string, string> = {};
         for (const review of reviewsPayload.reviews) {
-          drafts[review.reviewId] = review.replyComment ?? "";
+          if (review.replyComment) {
+            drafts[review.reviewId] = review.replyComment;
+          } else if (!review.comment) {
+            drafts[review.reviewId] = generateReviewReply({
+              review: {
+                name: review.reviewName,
+                starRating: review.starRating,
+                comment: ""
+              },
+              businessName: reviewsPayload.location.locationTitle,
+              brandVoice: settingsPayload.settings.tone
+            });
+          } else {
+            drafts[review.reviewId] = "";
+          }
         }
         setReplyDrafts(drafts);
       })
