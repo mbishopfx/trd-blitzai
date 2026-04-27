@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { compareSnapshots, ensureFreshAccessToken } from "../src";
+import { compareSnapshots, ensureFreshAccessToken, generateReviewReply, hasReviewComment } from "../src";
 
 const oauthConfig = {
   clientId: "client-id",
@@ -94,5 +94,28 @@ describe("compareSnapshots", () => {
     expect(changes.length).toBeGreaterThanOrEqual(3);
     expect(changes.some((change) => change.fieldName === "title")).toBe(true);
     expect(changes.some((change) => change.fieldName === "new_review")).toBe(true);
+  });
+});
+
+describe("review replies", () => {
+  it("treats whitespace-only review text as rating-only", () => {
+    expect(hasReviewComment("   \n\t  ")).toBe(false);
+    expect(hasReviewComment("Quick and professional")).toBe(true);
+  });
+
+  it("generates a generic positive reply when no review text is present", () => {
+    const reply = generateReviewReply({
+      review: {
+        name: "accounts/1/locations/2/reviews/3",
+        starRating: "FIVE",
+        comment: "   "
+      },
+      businessName: "Brooklyn Paint",
+      brandVoice: "Brooklyn Paint Team"
+    });
+
+    expect(reply).toContain("positive rating");
+    expect(reply).toContain("Brooklyn Paint Team");
+    expect(reply).not.toContain('We appreciate the details: "');
   });
 });

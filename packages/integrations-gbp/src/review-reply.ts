@@ -30,6 +30,10 @@ function trimComment(comment: string | undefined): string {
   return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
 }
 
+export function hasReviewComment(comment: string | undefined): boolean {
+  return trimComment(comment).length > 0;
+}
+
 export function generateReviewReply(input: {
   review: GbpReview;
   businessName: string;

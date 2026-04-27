@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { generateReviewReply } from "@trd-aiblitz/integrations-gbp";
+import { generateReviewReply, hasReviewComment } from "@trd-aiblitz/integrations-gbp";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -49,6 +49,10 @@ interface BlitzAutopilotPolicy {
 interface OrchestrationSettings {
   tone: string;
   reviewReplyStyle: string;
+}
+
+function reviewHasText(comment: string): boolean {
+  return hasReviewComment(comment);
 }
 
 function formatDate(value: string | null): string {
@@ -98,7 +102,7 @@ export default function ClientReviewsPage() {
         for (const review of reviewsPayload.reviews) {
           if (review.replyComment) {
             drafts[review.reviewId] = review.replyComment;
-          } else if (!review.comment) {
+          } else if (!reviewHasText(review.comment)) {
             drafts[review.reviewId] = generateReviewReply({
               review: {
                 name: review.reviewName,
@@ -132,7 +136,7 @@ export default function ClientReviewsPage() {
     () => ({
       queued: payload?.reviews.filter((review) => review.hasReply).length ?? 0,
       sent: payload?.reviews.length ?? 0,
-      failed: payload?.reviews.filter((review) => !review.hasReply && !review.comment).length ?? 0,
+      ratingOnly: payload?.reviews.filter((review) => !review.hasReply && !reviewHasText(review.comment)).length ?? 0,
       manualReviews: pendingReviews.length
     }),
     [payload, pendingReviews]
@@ -343,8 +347,8 @@ export default function ClientReviewsPage() {
                 <p className="mt-2 text-2xl font-semibold">{metrics.sent}</p>
               </div>
               <div className="rounded-2xl border border-stone-200/80 bg-stone-50/70 p-4">
-                <p className="text-xs uppercase tracking-[0.14em] text-stone-500">Failed</p>
-                <p className="mt-2 text-2xl font-semibold">{metrics.failed}</p>
+                <p className="text-xs uppercase tracking-[0.14em] text-stone-500">Rating-only</p>
+                <p className="mt-2 text-2xl font-semibold">{metrics.ratingOnly}</p>
               </div>
               <div className="rounded-2xl border border-red-200 bg-red-50/70 p-4 text-red-950">
                 <p className="text-xs uppercase tracking-[0.14em]">Manual replies</p>
@@ -436,7 +440,9 @@ export default function ClientReviewsPage() {
                       <p className="text-xs text-muted-foreground">{formatDate(review.updatedAt ?? review.createdAt)}</p>
                     </td>
                     <td className="px-4 py-4">{review.rating || review.starRating}</td>
-                    <td className="px-4 py-4">{review.comment || <span className="text-muted-foreground">No review text</span>}</td>
+                    <td className="px-4 py-4">
+                      {reviewHasText(review.comment) ? review.comment : <span className="text-muted-foreground">No review text</span>}
+                    </td>
                     <td className="px-4 py-4">{review.replyComment ?? <span className="text-muted-foreground">No reply yet</span>}</td>
                     <td className="px-4 py-4">
                       <Textarea
