@@ -94,18 +94,7 @@ export class DefaultBlitzPlanner implements ActionPlanner {
           })
         ];
       case "reviews":
-        return [
-          baseAction(
-            "reviews",
-            "review_reply",
-            "high",
-            {
-              objective: "auto_reply_all_pending_reviews",
-              includeLowAndHighRatings: true
-            },
-            { isReviewActionForAllRatings: true }
-          )
-        ];
+        return [];
       case "interaction":
         return [
           baseAction("interaction", "hours_update", "medium", {

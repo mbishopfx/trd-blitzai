@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { NextRequest } from "next/server";
 import { getRequestContext, hasRole } from "@/lib/auth";
-import { getClientById, getClientOrchestrationSettings } from "@/lib/control-plane-store";
-import { autoReplyClientReviews, listClientGbpReviews } from "@/lib/gbp-runtime";
+import { getClientById } from "@/lib/control-plane-store";
+import { listClientGbpReviews } from "@/lib/gbp-runtime";
 import { fail, ok } from "@/lib/http";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
@@ -66,13 +66,5 @@ export async function POST(request: NextRequest, { params }: Params) {
     return fail("Invalid reviews action payload", 400, parsed.error.flatten());
   }
 
-  const settings = await getClientOrchestrationSettings(params.clientId);
-  const result = await autoReplyClientReviews({
-    clientId: params.clientId,
-    tone: settings.tone,
-    reviewReplyStyle: settings.reviewReplyStyle,
-    limit: parsed.data.limit
-  });
-
-  return ok({ result });
+  return fail("Automatic review replies are disabled. Post replies manually from the review workspace.", 403);
 }

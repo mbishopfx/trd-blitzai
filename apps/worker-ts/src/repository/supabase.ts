@@ -51,13 +51,16 @@ function defaultPolicy(clientId: string): BlitzAutopilotPolicy {
       "profile_patch",
       "media_upload",
       "post_publish",
-      "review_reply",
       "hours_update",
       "attribute_update"
     ],
-    reviewReplyAllRatingsEnabled: true,
+    reviewReplyAllRatingsEnabled: false,
     updatedAt: nowIso()
   };
+}
+
+function normalizeAutopilotActionTypes(actionTypes: BlitzActionType[]): BlitzActionType[] {
+  return actionTypes.filter((actionType) => actionType !== "review_reply");
 }
 
 function mapRunRow(row: Record<string, unknown>): BlitzRun {
@@ -369,9 +372,9 @@ export class SupabaseBlitzRepository implements BlitzRunRepository {
       minCooldownMinutes: numberValue(data.min_cooldown_minutes),
       denyCriticalWithoutEscalation: Boolean(data.deny_critical_without_escalation),
       enabledActionTypes: Array.isArray(data.enabled_action_types)
-        ? data.enabled_action_types.map((value) => String(value) as BlitzActionType)
+        ? normalizeAutopilotActionTypes(data.enabled_action_types.map((value) => String(value) as BlitzActionType))
         : defaultPolicy(clientId).enabledActionTypes,
-      reviewReplyAllRatingsEnabled: Boolean(data.review_reply_all_ratings_enabled),
+      reviewReplyAllRatingsEnabled: false,
       updatedAt: String(data.updated_at ?? nowIso())
     };
   }

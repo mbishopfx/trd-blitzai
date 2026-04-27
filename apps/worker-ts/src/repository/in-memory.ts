@@ -51,11 +51,10 @@ function defaultPolicy(clientId: string): BlitzAutopilotPolicy {
       "profile_patch",
       "media_upload",
       "post_publish",
-      "review_reply",
       "hours_update",
       "attribute_update"
     ],
-    reviewReplyAllRatingsEnabled: true,
+    reviewReplyAllRatingsEnabled: false,
     updatedAt: nowIso()
   };
 }

@@ -35,17 +35,6 @@ interface ReviewsPayload {
   reviews: ReviewRecord[];
 }
 
-interface BlitzAutopilotPolicy {
-  clientId: string;
-  maxDailyActionsPerLocation: number;
-  maxActionsPerPhase: number;
-  minCooldownMinutes: number;
-  denyCriticalWithoutEscalation: boolean;
-  enabledActionTypes: string[];
-  reviewReplyAllRatingsEnabled: boolean;
-  updatedAt: string;
-}
-
 interface OrchestrationSettings {
   tone: string;
   reviewReplyStyle: string;
@@ -66,7 +55,6 @@ export default function ClientReviewsPage() {
   const { request } = useDashboardContext();
 
   const [payload, setPayload] = useState<ReviewsPayload | null>(null);
-  const [policy, setPolicy] = useState<BlitzAutopilotPolicy | null>(null);
   const [settings, setSettings] = useState<OrchestrationSettings | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -90,12 +78,10 @@ export default function ClientReviewsPage() {
 
     void Promise.all([
       request<ReviewsPayload>(`/api/v1/clients/${clientId}/reviews?limit=100`),
-      request<{ policy: BlitzAutopilotPolicy }>(`/api/v1/clients/${clientId}/autopilot/policies`),
       request<{ settings: OrchestrationSettings }>(`/api/v1/clients/${clientId}/orchestration/settings`)
     ])
-      .then(([reviewsPayload, policyPayload, settingsPayload]) => {
+      .then(([reviewsPayload, settingsPayload]) => {
         setPayload(reviewsPayload);
-        setPolicy(policyPayload.policy);
         setSettings(settingsPayload.settings);
 
         const drafts: Record<string, string> = {};
@@ -141,60 +127,6 @@ export default function ClientReviewsPage() {
     }),
     [payload, pendingReviews]
   );
-
-  const runAutoReply = async () => {
-    setBusy(true);
-    setError(null);
-    setStatusNote(null);
-
-    try {
-      const resultPayload = await request<{
-        result: { attempted: number; posted: number; skipped: number; failed: number };
-      }>(`/api/v1/clients/${clientId}/reviews`, {
-        method: "POST",
-        body: {
-          action: "auto_reply_pending",
-          limit: 100
-        }
-      });
-
-      setStatusNote(
-        `Auto reply finished. Attempted ${resultPayload.result.attempted}, posted ${resultPayload.result.posted}, skipped ${resultPayload.result.skipped}, failed ${resultPayload.result.failed}.`
-      );
-      loadReviewsWorkspace();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const updateAutopilot = async (nextState: boolean) => {
-    if (!policy) return;
-
-    setBusy(true);
-    setError(null);
-    setStatusNote(null);
-    try {
-      const updated = await request<{ policy: BlitzAutopilotPolicy }>(`/api/v1/clients/${clientId}/autopilot/policies`, {
-        method: "POST",
-        body: {
-          maxDailyActionsPerLocation: policy.maxDailyActionsPerLocation,
-          maxActionsPerPhase: policy.maxActionsPerPhase,
-          minCooldownMinutes: policy.minCooldownMinutes,
-          denyCriticalWithoutEscalation: policy.denyCriticalWithoutEscalation,
-          enabledActionTypes: policy.enabledActionTypes,
-          reviewReplyAllRatingsEnabled: nextState
-        }
-      });
-      setPolicy(updated.policy);
-      setStatusNote(`Autopilot all-rating reply mode is now ${nextState ? "enabled" : "disabled"}.`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const postManualReply = async (reviewId: string) => {
     const comment = replyDrafts[reviewId]?.trim();
@@ -290,18 +222,8 @@ export default function ClientReviewsPage() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void runAutoReply()} disabled={busy}>
-                {busy ? "Running..." : "Auto Reply Pending Reviews"}
-              </Button>
               <Button variant="outline" onClick={loadReviewsWorkspace} disabled={loading}>
                 Refresh Reviews
-              </Button>
-              <Button
-                variant={policy?.reviewReplyAllRatingsEnabled ? "secondary" : "destructive"}
-                onClick={() => void updateAutopilot(!(policy?.reviewReplyAllRatingsEnabled ?? false))}
-                disabled={busy || !policy}
-              >
-                {policy?.reviewReplyAllRatingsEnabled ? "Disable All-Rating Auto Reply" : "Enable All-Rating Auto Reply"}
               </Button>
             </div>
           </div>
@@ -312,6 +234,7 @@ export default function ClientReviewsPage() {
             <Badge variant="secondary">Pending replies: {pendingReviews.length}</Badge>
             <Badge variant="secondary">Tone: {settings?.tone ?? "-"}</Badge>
             <Badge variant="secondary">Style: {settings?.reviewReplyStyle ?? "-"}</Badge>
+            <Badge variant="secondary">Auto replies: disabled</Badge>
             {payload ? <Badge variant="secondary">Location: {payload.location.locationTitle}</Badge> : null}
           </div>
 

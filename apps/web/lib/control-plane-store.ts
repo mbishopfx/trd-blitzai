@@ -272,13 +272,16 @@ function defaultPolicy(clientId: string): BlitzAutopilotPolicy {
       "profile_patch",
       "media_upload",
       "post_publish",
-      "review_reply",
       "hours_update",
       "attribute_update"
     ],
-    reviewReplyAllRatingsEnabled: true,
+    reviewReplyAllRatingsEnabled: false,
     updatedAt: nowIso()
   };
+}
+
+function normalizeAutopilotActionTypes(actionTypes: BlitzActionType[]): BlitzActionType[] {
+  return actionTypes.filter((actionType) => actionType !== "review_reply");
 }
 
 function defaultOrchestrationSettings(
@@ -1397,11 +1400,15 @@ export async function upsertAutopilotPolicy(
   clientId: string,
   input: Omit<BlitzAutopilotPolicy, "clientId" | "updatedAt">
 ): Promise<BlitzAutopilotPolicy> {
+  const normalizedActionTypes = normalizeAutopilotActionTypes(input.enabledActionTypes);
+
   if (!isSupabaseConfigured()) {
     const store = getStore();
     const policy: BlitzAutopilotPolicy = {
       clientId,
       ...input,
+      enabledActionTypes: normalizedActionTypes,
+      reviewReplyAllRatingsEnabled: false,
       updatedAt: nowIso()
     };
     store.autopilotPolicies.set(clientId, policy);
@@ -1431,8 +1438,8 @@ export async function upsertAutopilotPolicy(
         max_actions_per_phase: input.maxActionsPerPhase,
         min_cooldown_minutes: input.minCooldownMinutes,
         deny_critical_without_escalation: input.denyCriticalWithoutEscalation,
-        enabled_action_types: input.enabledActionTypes,
-        review_reply_all_ratings_enabled: input.reviewReplyAllRatingsEnabled,
+        enabled_action_types: normalizedActionTypes,
+        review_reply_all_ratings_enabled: false,
         updated_at: updatedAt
       },
       {
@@ -1454,9 +1461,9 @@ export async function upsertAutopilotPolicy(
     minCooldownMinutes: numberValue(row.min_cooldown_minutes),
     denyCriticalWithoutEscalation: Boolean(row.deny_critical_without_escalation),
     enabledActionTypes: Array.isArray(row.enabled_action_types)
-      ? row.enabled_action_types.map((v) => String(v) as BlitzActionType)
+      ? normalizeAutopilotActionTypes(row.enabled_action_types.map((v) => String(v) as BlitzActionType))
       : defaultPolicy(clientId).enabledActionTypes,
-    reviewReplyAllRatingsEnabled: Boolean(row.review_reply_all_ratings_enabled),
+    reviewReplyAllRatingsEnabled: false,
     updatedAt: String(row.updated_at ?? updatedAt)
   };
 }
@@ -1495,11 +1502,10 @@ export async function getAutopilotPolicy(clientId: string): Promise<BlitzAutopil
         "profile_patch",
         "media_upload",
         "post_publish",
-        "review_reply",
         "hours_update",
         "attribute_update"
       ],
-      reviewReplyAllRatingsEnabled: true
+      reviewReplyAllRatingsEnabled: false
     });
   }
 
@@ -1510,9 +1516,9 @@ export async function getAutopilotPolicy(clientId: string): Promise<BlitzAutopil
     minCooldownMinutes: numberValue(row.min_cooldown_minutes),
     denyCriticalWithoutEscalation: Boolean(row.deny_critical_without_escalation),
     enabledActionTypes: Array.isArray(row.enabled_action_types)
-      ? row.enabled_action_types.map((v) => String(v) as BlitzActionType)
+      ? normalizeAutopilotActionTypes(row.enabled_action_types.map((v) => String(v) as BlitzActionType))
       : defaultPolicy(clientId).enabledActionTypes,
-    reviewReplyAllRatingsEnabled: Boolean(row.review_reply_all_ratings_enabled),
+    reviewReplyAllRatingsEnabled: false,
     updatedAt: String(row.updated_at ?? nowIso())
   };
 }

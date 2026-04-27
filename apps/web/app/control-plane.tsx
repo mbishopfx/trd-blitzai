@@ -1948,22 +1948,6 @@ export function ControlPlaneDashboard() {
                     Critical Escalation: {policy.denyCriticalWithoutEscalation ? "Required" : "Not Required"}
                   </button>
                   <button
-                    className={`${styles.btnSecondary} ${busyKey ? styles.disabled : ""}`}
-                    onClick={() =>
-                      setPolicy((current) =>
-                        current
-                          ? {
-                              ...current,
-                              reviewReplyAllRatingsEnabled: !current.reviewReplyAllRatingsEnabled
-                            }
-                          : current
-                      )
-                    }
-                    disabled={Boolean(busyKey)}
-                  >
-                    Review Replies (All Ratings): {policy.reviewReplyAllRatingsEnabled ? "Enabled" : "Disabled"}
-                  </button>
-                  <button
                     className={`${styles.btnPrimary} ${busyKey ? styles.disabled : ""}`}
                     onClick={() => void handleSavePolicy()}
                     disabled={Boolean(busyKey)}
