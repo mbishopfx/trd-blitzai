@@ -1,4 +1,4 @@
-import { GbpApiClient, generateReviewReply, refreshAccessToken, type GbpReview } from "@trd-aiblitz/integrations-gbp";
+import { GbpApiClient, generateReviewReply, hasReviewComment, refreshAccessToken, type GbpReview } from "@trd-aiblitz/integrations-gbp";
 import { decryptJson, encryptJson } from "@/lib/crypto";
 import { getSupabaseServiceClient, isSupabaseConfigured } from "@/lib/supabase";
 
@@ -419,6 +419,10 @@ export async function postClientReviewReply(input: {
 
   if (!targetReview) {
     throw new Error(`Review ${input.reviewId} was not found in the latest GBP review feed`);
+  }
+
+  if (!hasReviewComment(targetReview.comment)) {
+    throw new Error("Google Business Profile does not currently allow API replies for rating-only reviews with no written comment");
   }
 
   if (targetReview?.reviewReply?.comment) {

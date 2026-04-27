@@ -371,6 +371,7 @@ export default function ClientReviewsPage() {
                       <Textarea
                         className="min-h-28"
                         value={replyDrafts[review.reviewId] ?? ""}
+                        disabled={!reviewHasText(review.comment)}
                         onChange={(event) =>
                           setReplyDrafts((current) => ({
                             ...current,
@@ -380,9 +381,15 @@ export default function ClientReviewsPage() {
                       />
                     </td>
                     <td className="px-4 py-4">
-                      <Button size="sm" onClick={() => void postManualReply(review.reviewId)} disabled={busy}>
-                        Post Reply
-                      </Button>
+                      {reviewHasText(review.comment) ? (
+                        <Button size="sm" onClick={() => void postManualReply(review.reviewId)} disabled={busy}>
+                          Post Reply
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          Rating-only review. Google does not allow API replies.
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}
