@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { compareSnapshots, ensureFreshAccessToken, generateReviewReply, hasReviewComment } from "../src";
+import { GbpApiClient, compareSnapshots, ensureFreshAccessToken, generateReviewReply, hasReviewComment } from "../src";
 
 const oauthConfig = {
   clientId: "client-id",
@@ -114,8 +114,50 @@ describe("review replies", () => {
       brandVoice: "Brooklyn Paint Team"
     });
 
-    expect(reply).toContain("positive rating");
-    expect(reply).toContain("Brooklyn Paint Team");
-    expect(reply).not.toContain('We appreciate the details: "');
+    expect(reply).toContain("5-star review");
+    expect(reply).not.toContain("Brooklyn Paint Team");
+    expect(reply).not.toContain("positive rating");
+    expect(reply).not.toContain(" - ");
+  });
+
+  it("keeps positive written-review replies short and natural", () => {
+    const reply = generateReviewReply({
+      review: {
+        name: "accounts/1/locations/2/reviews/3",
+        starRating: "FIVE",
+        comment: "Fast, friendly, and professional service."
+      },
+      businessName: "Road Warrior Towing"
+    });
+
+    expect(reply).toContain("Road Warrior Towing");
+    expect(reply).not.toContain('"Fast, friendly, and professional service."');
+    expect(reply).not.toContain("Thanks for sharing this feedback");
+  });
+});
+
+describe("review reply API client", () => {
+  it("uses the canonical review resource name when provided", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => "{}"
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new GbpApiClient("token");
+    await client.postReviewReply(
+      "123",
+      "456",
+      "accounts/123/locations/456/reviews/abc123",
+      "Thanks for the review."
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://mybusiness.googleapis.com/v4/accounts/123/locations/456/reviews/abc123/reply",
+      expect.objectContaining({
+        method: "PUT"
+      })
+    );
   });
 });

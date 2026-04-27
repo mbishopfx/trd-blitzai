@@ -41,27 +41,26 @@ export function generateReviewReply(input: {
 }): string {
   const rating = ratingToNumber(input.review.starRating);
   const comment = trimComment(input.review.comment);
-  const signature = input.brandVoice?.trim() || input.businessName;
 
   if (rating >= 4) {
-    return [
-      `Thanks for sharing this feedback about ${input.businessName}.`,
-      comment ? `We appreciate the details: "${comment}".` : "Thank you for the positive rating, we appreciate you taking the time to support us!",
-      `- ${signature}`
-    ].join(" ");
+    if (comment) {
+      return `Thanks for the review. We're glad you had a good experience with ${input.businessName}, and we appreciate you taking the time to share your feedback.`;
+    }
+
+    return `Thanks for the 5-star review. We appreciate your support and are glad we could help.`;
   }
 
   if (rating === 3) {
-    return [
-      `Thank you for the honest feedback about ${input.businessName}.`,
-      comment ? `We are reviewing your comments: "${comment}" internally.` : "We appreciate the rating and would value a chance to improve your next visit.",
-      `- ${signature}`
-    ].join(" ");
+    if (comment) {
+      return `Thanks for the feedback. We appreciate you letting us know about your experience and will use it to keep improving.`;
+    }
+
+    return `Thanks for the feedback. We appreciate the review and will keep working to improve the experience we provide.`;
   }
 
-  return [
-    `Thank you for flagging this. We are sorry your experience with ${input.businessName} missed expectations.`,
-    comment ? `We are investigating your feedback: "${comment}" quickly.` : "Please contact us directly so we can learn more about your experience and make this right.",
-    `- ${signature}`
-  ].join(" ");
+  if (comment) {
+    return `Thanks for the feedback. We're sorry your experience did not meet expectations. Please contact us directly so we can learn more and work to make this right.`;
+  }
+
+  return `Thanks for the feedback. We're sorry your experience did not meet expectations. Please contact us directly so we can help.`;
 }

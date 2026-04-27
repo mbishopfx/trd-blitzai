@@ -417,6 +417,10 @@ export async function postClientReviewReply(input: {
   const reviews = await runtime.client.fetchReviews(runtime.accountId, runtime.locationId);
   const targetReview = reviews.find((review) => parseReviewId(review) === input.reviewId);
 
+  if (!targetReview) {
+    throw new Error(`Review ${input.reviewId} was not found in the latest GBP review feed`);
+  }
+
   if (targetReview?.reviewReply?.comment) {
     throw new Error(`Review ${input.reviewId} already has a reply on GBP`);
   }
@@ -427,7 +431,7 @@ export async function postClientReviewReply(input: {
 
   const postedAt = new Date().toISOString();
 
-  await runtime.client.postReviewReply(runtime.accountId, runtime.locationId, input.reviewId, input.comment);
+  await runtime.client.postReviewReply(runtime.accountId, runtime.locationId, targetReview.name, input.comment);
 
   await upsertReplyHistory({
     organizationId: runtime.organizationId,
@@ -493,7 +497,7 @@ export async function autoReplyClientReviews(input: {
     });
 
     try {
-      await runtime.client.postReviewReply(runtime.accountId, runtime.locationId, reviewId, finalReply);
+      await runtime.client.postReviewReply(runtime.accountId, runtime.locationId, review.name, finalReply);
       posted += 1;
       await upsertReplyHistory({
         organizationId: runtime.organizationId,

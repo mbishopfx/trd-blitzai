@@ -1341,22 +1341,29 @@ function replyForReview(input: {
   const serviceEntity =
     sanitizeEntityLabel(input.serviceName ?? inferServiceEntity(input.comment) ?? "your recent service", 90) ||
     "your recent service";
-  const intro = `Hi ${name}, thank you for your feedback.`;
-  const tonePrefix = input.tone.includes("friendly") ? "We appreciate you choosing our team." : "";
+  const hasComment = normalizeText(input.comment).length > 0;
   if (input.starRating >= 4) {
-    return `${intro} ${tonePrefix} Our team in ${locality} is glad we could help with ${serviceEntity}. If you need follow-up support, tap Call and we will prioritize your request.`
-      .replace(/\s+/g, " ")
-      .trim();
+    return hasComment
+      ? `Thanks for the review, ${name}. We're glad we could help with ${serviceEntity} in ${locality}, and we appreciate you taking the time to share your feedback.`
+          .replace(/\s+/g, " ")
+          .trim()
+      : `Thanks for the 5-star review, ${name}. We're glad we could help and appreciate your support.`
+          .replace(/\s+/g, " ")
+          .trim();
   }
   if (input.starRating === 3) {
-    return `${intro} ${tonePrefix} We appreciate your input about ${serviceEntity} in ${locality}. We are already using this feedback to improve response speed and communication on future jobs.`
-      .replace(/\s+/g, " ")
-      .trim();
+    return hasComment
+      ? `Thanks for the feedback, ${name}. We appreciate you letting us know about your experience with ${serviceEntity} in ${locality} and will use it to keep improving.`
+          .replace(/\s+/g, " ")
+          .trim()
+      : `Thanks for the feedback, ${name}. We appreciate the review and will keep working to improve the experience we provide.`
+          .replace(/\s+/g, " ")
+          .trim();
   }
   const directEnding = input.style.toLowerCase().includes("direct")
-    ? "Please call us today so a manager can fix this immediately."
+    ? "Please call us directly so a manager can help."
     : "Please contact us directly so we can make this right.";
-  return `${intro} We're sorry your ${serviceEntity} experience in ${locality} did not meet expectations. ${directEnding}`
+  return `Thanks for the feedback, ${name}. We're sorry your experience with ${serviceEntity} in ${locality} did not meet expectations. ${directEnding}`
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -7311,7 +7318,7 @@ export class GbpLiveActionExecutor implements ActionExecutor {
         }
 
         try {
-          await input.context.client.postReviewReply(location.accountId, location.locationId, reviewId, replyText);
+          await input.context.client.postReviewReply(location.accountId, location.locationId, review.name, replyText);
           await this.deps.repository.recordReviewReplyHistory({
             organizationId,
             clientId,

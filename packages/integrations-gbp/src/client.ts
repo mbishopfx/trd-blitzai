@@ -14,6 +14,19 @@ interface RequestOptions {
   body?: unknown;
 }
 
+function toReviewResourceName(accountId: string, locationId: string, reviewNameOrId: string): string {
+  const trimmed = reviewNameOrId.trim();
+  if (!trimmed) {
+    throw new Error("Review identifier is required");
+  }
+
+  if (trimmed.startsWith("accounts/") && trimmed.includes("/reviews/")) {
+    return trimmed;
+  }
+
+  return `accounts/${accountId}/locations/${locationId}/reviews/${encodeURIComponent(trimmed)}`;
+}
+
 export class GbpApiClient {
   constructor(private readonly accessToken: string) {}
 
@@ -174,8 +187,9 @@ export class GbpApiClient {
     return result.reviews ?? [];
   }
 
-  async postReviewReply(accountId: string, locationId: string, reviewId: string, comment: string): Promise<void> {
-    const endpoint = `https://mybusiness.googleapis.com/v4/accounts/${accountId}/locations/${locationId}/reviews/${reviewId}/reply`;
+  async postReviewReply(accountId: string, locationId: string, reviewNameOrId: string, comment: string): Promise<void> {
+    const reviewName = toReviewResourceName(accountId, locationId, reviewNameOrId);
+    const endpoint = `https://mybusiness.googleapis.com/v4/${reviewName}/reply`;
     await this.request<Record<string, unknown>>(endpoint, {
       method: "PUT",
       body: { comment }
