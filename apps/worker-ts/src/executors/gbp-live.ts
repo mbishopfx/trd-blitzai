@@ -1132,10 +1132,7 @@ function buildPostHashtags(input: {
     2
   );
   const cityTag = input.cityState ? toHashtagLabel(input.cityState.split(",")[0] ?? input.cityState) : null;
-  const tags = uniqueStrings(
-    [...topicTags.map((token) => `#${token}`), cityTag ? `#${cityTag}` : null, "#LocalService", "#BookLocal"],
-    5
-  );
+  const tags = uniqueStrings([...topicTags.map((token) => `#${token}`), cityTag ? `#${cityTag}` : null], 2);
   return tags.join(" ");
 }
 
@@ -1158,22 +1155,16 @@ function buildStyledGbpSnippet(input: {
   });
 
   const lines = [
-    `🔧 ${areaLine}? ${locationTitle} is here to help.`,
+    `${locationTitle} helps local customers with ${areaLine.toLowerCase()} when they want clear communication and solid work they can feel good about.`,
     "",
-    `At ${locationTitle}, we provide practical help with ${topicLabel.toLowerCase()} using a clear process, reliable communication, and execution focused on measurable results.`,
+    `This page gives a straightforward look at what the service covers, what to expect, and when it may be a good fit.`,
     "",
-    "💰 Cost-conscious planning with transparent scope before work begins.",
-    "🏆 Skilled execution with technical detail and quality control checkpoints.",
-    "📞 Fast response with clear timelines, next steps, and support after delivery.",
-    "✅ Durable outcomes built for repeat use in real homes and businesses.",
-    "",
-    `Need help with ${topicLabel.toLowerCase()}? Contact ${locationTitle} today and let’s get your project moving.`,
-    "",
-    hashtags,
-    "",
-    "Click here to learn more:",
-    ctaTarget
+    `Learn more: ${ctaTarget}`
   ];
+
+  if (hashtags) {
+    lines.push("", hashtags);
+  }
 
   if (input.addressLine) {
     lines.push("", `📍 ${cleanDisplayText(input.addressLine, "").slice(0, 120)}`);
@@ -2103,8 +2094,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
 
     return [
       "You are a senior local SEO content writer producing GBP post copy.",
-      "Write natural, humanized copy with no robotic filler and no hype.",
-      "Write for generative local search systems that reward short factual chunks, clear entities, and direct answers.",
+      "Write natural, human-sounding copy that feels like it came from a real business owner or manager.",
+      "Write for local customers first, while staying useful for generative local search systems.",
+      "Keep the language plain, specific, believable, and easy to read in one pass.",
       "",
       "Return STRICT JSON only with this exact shape:",
       "{",
@@ -2121,14 +2113,20 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       "- Start longForm with a clear H1-style heading relevant to local urgency or local opportunity.",
       "- Include exactly one compact bullet list with 3 factual bullets.",
       "- Include one compact bullet list under a section named Structured Snippet.",
-      "- The snippet must read like a complete social post, not a data dump.",
-      "- Use short, human-readable sections and benefit bullets in snippet output.",
+      "- The snippet must read like a complete GBP post written by a person, not a content template.",
+      "- Write the snippet in plain prose, not stacked sales bullets, unless the page context strongly supports that structure.",
       "- Never output raw scraped fragments, semicolon-separated token dumps, or malformed domain text.",
-      "- Keep tone professional, local-expert, and conversational.",
+      "- Keep tone conversational, grounded, and locally aware.",
       "- Anchor the post semantically to the landing page topic and user intent.",
       `- Treat this as a ${input.archetype.label.toLowerCase()} style GBP post.`,
-      "- Include a clear conversion CTA with the short URL.",
-      "- Limited symbols/emojis are allowed for readability (max 1 per line).",
+      "- Include a simple CTA near the end with the short URL.",
+      "- Use 0 to 2 hashtags at most, and omit hashtags entirely if they do not add value.",
+      "- Do not use emoji unless there is a clear reason to do so.",
+      "- Vary sentence length and avoid repetitive rhythm.",
+      "- Avoid repeating the business name or service phrase unnaturally.",
+      "- Avoid generic AI phrasing such as 'is here to help', 'clear process', 'measurable results', 'cost-conscious planning', 'technical detail', 'durable outcomes', 'contact us today', or 'click here to learn more'.",
+      "- Avoid ad-template language, vague claims, and keyword stuffing.",
+      "- Prefer one concrete angle from the landing page over broad filler claims.",
       "",
       "Context:",
       `- Business: ${input.locationTitle}`,
@@ -2151,8 +2149,9 @@ export class GbpLiveActionExecutor implements ActionExecutor {
       "",
       "Output requirements:",
       "- longForm should read like a polished local service update and align with AI retrieval relevance (EEAT, factual clarity, local intent).",
-      "- snippet should be concise, actionable, and optimized for GBP readability with the short URL.",
-      "- Make the first 2 to 3 sentences highly quotable by Gemini and local AI summaries.",
+      "- snippet should feel timely, specific, and natural, with a clear human voice.",
+      "- The first line should sound natural, not like a hook formula.",
+      "- Make the first 2 to 3 sentences clear and quotable without sounding engineered.",
       operatorSystemMessage ? "- Treat the operator system message as a strict instruction override when policy-safe." : null,
       "",
       "Now return JSON only."
