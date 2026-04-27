@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { generateReviewReply, hasReviewComment } from "@trd-aiblitz/integrations-gbp";
+import { generateReviewReply, hasReviewComment } from "@trd-aiblitz/integrations-gbp/src/review-reply";
 import { ClientTabs } from "../../../_components/client-tabs";
 import { useDashboardContext } from "../../../_components/dashboard-context";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
